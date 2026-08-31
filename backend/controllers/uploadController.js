@@ -265,10 +265,56 @@ async function deleteUploadBatch(req, res, next) {
   }
 }
 
+/**
+ * DELETE /api/upload/all
+ * Wipes EVERY uploaded file record and ALL imported data from MongoDB:
+ * all upload batches, officers, booths, allocations and notifications.
+ * Used by the "Delete All Files" button in the upload history list.
+ */
+async function deleteAllUploads(req, res, next) {
+  try {
+    const [batchCount, officerCount, boothCount, allocCount, notifCount] =
+      await Promise.all([
+        UploadBatch.countDocuments(),
+        Officer.countDocuments(),
+        Booth.countDocuments(),
+        Allocation.countDocuments(),
+        Notification.countDocuments(),
+      ]);
+
+    // Full wipe - "delete total data" of the uploaded files domain.
+    await Promise.all([
+      UploadBatch.deleteMany({}),
+      Allocation.deleteMany({}),
+      Notification.deleteMany({}),
+      Officer.deleteMany({}),
+      Booth.deleteMany({}),
+    ]);
+
+    return res.json({
+      success: true,
+      message:
+        `Deleted all ${batchCount} uploaded file(s) and their data - ` +
+        `${officerCount} officer(s), ${boothCount} booth(s), ` +
+        `${allocCount} allocation(s), ${notifCount} notification(s) removed`,
+      removed: {
+        batches: batchCount,
+        officers: officerCount,
+        booths: boothCount,
+        allocations: allocCount,
+        notifications: notifCount,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   uploadOfficers,
   uploadBooths,
   downloadTemplate,
   getUploadHistory,
   deleteUploadBatch,
+  deleteAllUploads,
 };

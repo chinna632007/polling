@@ -16,6 +16,10 @@ export default function UploadExcel() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
+  // "Delete All Files" confirmation state.
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+
   const fetchUploads = useCallback(async () => {
     setUploadsLoading(true);
     try {
@@ -49,6 +53,26 @@ export default function UploadExcel() {
       setDeleteTarget(null);
     } finally {
       setDeleting(false);
+    }
+  };
+
+  /** Wipes EVERY uploaded file and all its data from the database. */
+  const doDeleteAll = async () => {
+    setClearing(true);
+    try {
+      const { data } = await api.delete('/api/upload/all');
+      setNotify({
+        message: data.message || 'All uploaded files and their data were deleted',
+        type: 'success',
+        duration: 8000,
+      });
+      setConfirmClear(false);
+      await fetchUploads();
+    } catch (err) {
+      setNotify({ message: getErrorMessage(err), type: 'error', duration: 8000 });
+      setConfirmClear(false);
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -96,14 +120,26 @@ export default function UploadExcel() {
       <div className="card upload-history">
         <div className="upload-history-head">
           <h3 className="card-title">Uploaded Files</h3>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={fetchUploads}
-            disabled={uploadsLoading}
-          >
-            ↻ Refresh
-          </button>
+          <div className="page-actions">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={fetchUploads}
+              disabled={uploadsLoading || clearing}
+            >
+              ↻ Refresh
+            </button>
+            {uploads.length > 0 ? (
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={() => setConfirmClear(true)}
+                disabled={clearing || deleting}
+              >
+                🗑 Delete All Files
+              </button>
+            ) : null}
+          </div>
         </div>
 
         {uploadsLoading && uploads.length === 0 ? (
@@ -171,6 +207,17 @@ export default function UploadExcel() {
         loading={deleting}
         onConfirm={confirmDeleteUpload}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ConfirmModal
+        open={confirmClear}
+        title="Delete All Uploaded Files"
+        message="This will permanently delete ALL uploaded files and ALL their data from the database — every officer, booth, allocation and notification record. This cannot be undone."
+        confirmLabel="Delete Everything"
+        tone="danger"
+        loading={clearing}
+        onConfirm={doDeleteAll}
+        onCancel={() => setConfirmClear(false)}
       />
     </div>
   );

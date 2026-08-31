@@ -6,6 +6,7 @@ const {
   downloadTemplate,
   getUploadHistory,
   deleteUploadBatch,
+  deleteAllUploads,
 } = require('../controllers/uploadController');
 const { protect } = require('../middleware/authMiddleware');
 const { uploadSingleExcel } = require('../middleware/uploadMiddleware');
@@ -16,6 +17,10 @@ router.use(protect); // all upload endpoints require a valid JWT
 
 // GET /api/upload/history - list every committed upload (must be before /:id)
 router.get('/history', getUploadHistory);
+
+// DELETE /api/upload/all - wipe EVERY uploaded file and ALL its data
+// (must be registered before /:id so 'all' is not treated as an id)
+router.delete('/all', deleteAllUploads);
 
 // DELETE /api/upload/:id - remove the upload record AND its imported data
 router.delete(

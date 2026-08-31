@@ -113,12 +113,23 @@ export default function Register() {
   return (
     <div className="page-wrap">
       <div className="page-head">
-        <h1>{isBootstrapMode ? "Create First Admin Account" : "Register Administrator"}</h1>
-        <p className="muted">
-          {isBootstrapMode
-            ? "No administrator account exists yet. Create the first admin to get started."
-            : "Create a new administrator account."}
-        </p>
+        <div>
+          <h1>{isBootstrapMode ? "Create First Admin Account" : "Register Administrator"}</h1>
+          <p className="muted">
+            {isBootstrapMode
+              ? "No administrator account exists yet. Create the first admin to get started."
+              : "Create a new administrator account."}
+          </p>
+        </div>
+        <div className="page-actions">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => navigate(isBootstrapMode ? "/login" : "/")}
+          >
+            ← Back
+          </button>
+        </div>
       </div>
 
       <div className="register-grid">
