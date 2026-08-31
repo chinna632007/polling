@@ -1,0 +1,42 @@
+const express = require('express');
+const { param } = require('express-validator');
+const {
+  uploadOfficers,
+  uploadBooths,
+  downloadTemplate,
+  getUploadHistory,
+  deleteUploadBatch,
+} = require('../controllers/uploadController');
+const { protect } = require('../middleware/authMiddleware');
+const { uploadSingleExcel } = require('../middleware/uploadMiddleware');
+const { handleValidationErrors } = require('../middleware/validationMiddleware');
+
+const router = express.Router();
+router.use(protect); // all upload endpoints require a valid JWT
+
+// GET /api/upload/history - list every committed upload (must be before /:id)
+router.get('/history', getUploadHistory);
+
+// DELETE /api/upload/:id - remove the upload record AND its imported data
+router.delete(
+  '/:id',
+  param('id').isMongoId().withMessage('Invalid upload id'),
+  handleValidationErrors,
+  deleteUploadBatch
+);
+
+// POST /api/upload/officers?mode=preview|commit
+router.post('/officers', uploadSingleExcel, uploadOfficers);
+
+// POST /api/upload/booths?mode=preview|commit
+router.post('/booths', uploadSingleExcel, uploadBooths);
+
+// GET /api/upload/templates/officers  |  /booths  (sample .xlsx download)
+router.get(
+  '/templates/:kind',
+  param('kind').isIn(['officers', 'booths']).withMessage('Invalid template kind'),
+  handleValidationErrors,
+  downloadTemplate
+);
+
+module.exports = router;
