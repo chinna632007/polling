@@ -1,6 +1,7 @@
 const Allocation = require('../models/Allocation');
 const Notification = require('../models/Notification');
 const smsService = require('../services/smsService');
+const { notificationScopeFilter } = require('../services/roleService');
 
 /**
  * POST /api/notifications/send/:allocationId
@@ -51,6 +52,8 @@ async function sendAllocationNotification(req, res, next) {
 
 /**
  * GET /api/notifications?status=&page=&limit=
+ * A Mandal Officer only ever sees notifications belonging to officers inside
+ * their assigned Mandal (enforced server-side).
  */
 async function getNotifications(req, res, next) {
   try {
@@ -58,6 +61,10 @@ async function getNotifications(req, res, next) {
     const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 50));
     const filter = {};
     if (req.query.status) filter.status = req.query.status;
+
+    // Scope notifications to the user's assigned officers (Mandal Officers).
+    const notifScope = await notificationScopeFilter(req.user);
+    Object.assign(filter, notifScope);
 
     const query = Notification.find(filter).populate('officer').sort({ createdAt: -1 });
 

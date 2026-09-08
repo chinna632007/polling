@@ -11,7 +11,7 @@ import ConfirmModal from "../components/ConfirmModal";
 const EMPTY_FORM = { name: "", username: "", password: "", confirmPassword: "" };
 
 export default function Register() {
-  const { bootstrap, isBootstrapMode, bootstrapChecked } = useAuth();
+  const { bootstrap, isBootstrapMode, bootstrapChecked, user } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [admins, setAdmins] = useState([]);
@@ -26,7 +26,7 @@ export default function Register() {
     if (isBootstrapMode) { setAdmins([]); setListLoading(false); return; }
     setListLoading(true);
     try {
-      const { data } = await api.get("/api/auth/admins");
+      const { data } = await api.get("/api/auth/users");
       setAdmins(data.data || []);
     } catch (err) {
       setNotify({ message: getErrorMessage(err), type: "error" });
@@ -69,7 +69,7 @@ export default function Register() {
 
       if (isBootstrapMode) {
         const { data } = await api.post("/api/auth/boot", payload);
-        bootstrap({ token: data.token, admin: data.admin });
+        bootstrap({ token: data.token, user: data.user });
         setNotify({ message: "Admin account created and signed in", type: "success" });
         navigate("/", { replace: true });
       } else {

@@ -57,27 +57,120 @@ app.use(errorHandler);
 
 // ------------------------------- Bootstrap -------------------------------------
 /**
- * Seeds the default admin ONLY if the admin table is completely empty.
- * This replaces the old behavior of always seeding 'admin', which made it
- * impossible to use a clean /api/auth/boot flow when DB_HAS_NO_ADMINS is set.
+ * Seeds the demo user accounts used by the role-based login system.
+ * Demo accounts are created only when missing; in non-production environments
+ * their passwords are kept in sync with the documented defaults every boot so
+ * the example logins always work (disable with SEED_DEMO_PASSWORDS=false).
+ *
+ * Seeded accounts:
+ *   admin            / Admin@123   -> SUPER_ADMIN (admin user can be overridden
+ *                                     via ADMIN_USERNAME / ADMIN_PASSWORD)
+ *   allocator        / Allocate@123 -> ALLOCATION_OFFICER
+ *   mandal_kakinada  / Mandal@123  -> MANDAL_OFFICER (Kakinada)
+ *   mandal_rajahmundry / Mandal@123 -> MANDAL_OFFICER (Rajahmundry)
+ *   officer001       / Officer@123 -> BOOTH_OFFICER (links to officer OFFICER001)
  */
-async function seedDefaultAdmin() {
-  const existing = await Admin.findOne({});
-  if (existing) return;
-
-  const username = (process.env.ADMIN_USERNAME || 'admin').toLowerCase();
-  const password = process.env.ADMIN_PASSWORD || 'Admin@12345';
+async function seedDefaultUsers() {
+  const { ROLES } = require('./services/roleService');
   const bcrypt = require('bcryptjs');
-  const hash = await bcrypt.hash(password, 10);
-  await Admin.create({ username, password: hash });
-  console.log(`[AUTH] Default admin seeded: '${username}' (from ADMIN_USERNAME/ADMIN_PASSWORD in .env)`);
+
+  const demoUsers = [
+    {
+      username: (process.env.ADMIN_USERNAME || 'admin').toLowerCase(),
+      password: process.env.ADMIN_PASSWORD || 'Admin@123',
+      name: 'District Collector',
+      role: ROLES.SUPER_ADMIN,
+      district: process.env.ADMIN_DISTRICT || '',
+    },
+    {
+      username: 'allocator',
+      password: 'Allocate@123',
+      name: 'Allocation Officer',
+      role: ROLES.ALLOCATION_OFFICER,
+      district: '',
+    },
+    {
+      username: 'mandal_kakinada',
+      password: 'Mandal@123',
+      name: 'Mandal Officer - Kakinada',
+      role: ROLES.MANDAL_OFFICER,
+      assignedMandal: 'Kakinada',
+      district: '',
+    },
+    {
+      username: 'mandal_rajahmundry',
+      password: 'Mandal@123',
+      name: 'Mandal Officer - Rajahmundry',
+      role: ROLES.MANDAL_OFFICER,
+      assignedMandal: 'Rajahmundry',
+      district: '',
+    },
+    {
+      username: 'officer001',
+      password: 'Officer@123',
+      name: 'Booth Officer 001',
+      role: ROLES.BOOTH_OFFICER,
+      assignedOfficerId: 'OFFICER001',
+      assignedBooth: '',
+      district: '',
+    },
+  ];
+
+  const production = process.env.NODE_ENV === 'production';
+  if (production && process.env.SEED_DEMO_USERS === 'false') {
+    console.log('[AUTH] Demo user seeding disabled by SEED_DEMO_USERS=false');
+    return;
+  }
+
+  for (const demo of demoUsers) {
+    const existing = await Admin.findOne({ username: demo.username }).select('+password');
+    if (!existing) {
+      // eslint-disable-next-line no-await-in-loop
+      await Admin.create({ ...demo, password: await bcrypt.hash(demo.password, 10) });
+      console.log(`[AUTH] Seeded demo account '${demo.username}' (${demo.role})`);
+    } else {
+      let dirty = false;
+
+      // Backfill accounts created before the role system existed (they have no
+      // `role` field, which used to break role-based routing after login and
+      // made every authorize() check fail).
+      if (!existing.role) {
+        existing.role = demo.role;
+        if (demo.name && !existing.name) existing.name = demo.name;
+        if (demo.district && !existing.district) existing.district = demo.district;
+        if (demo.assignedMandal && !existing.assignedMandal) {
+          existing.assignedMandal = demo.assignedMandal;
+        }
+        if (demo.assignedOfficerId && !existing.assignedOfficerId) {
+          existing.assignedOfficerId = demo.assignedOfficerId;
+        }
+        dirty = true;
+        console.log(`[AUTH] Backfilled role of demo account '${demo.username}' -> ${demo.role}`);
+      }
+
+      // Keep documented demo passwords working in development.
+      if (!production && process.env.SEED_DEMO_PASSWORDS !== 'false') {
+        // eslint-disable-next-line no-await-in-loop
+        const ok = await existing.comparePassword(demo.password);
+        if (!ok) {
+          // eslint-disable-next-line no-await-in-loop
+          existing.password = await bcrypt.hash(demo.password, 10);
+          dirty = true;
+          console.log(`[AUTH] Updated password of demo account '${demo.username}'`);
+        }
+      }
+
+      // eslint-disable-next-line no-await-in-loop
+      if (dirty) await existing.save();
+    }
+  }
 }
 
 const PORT = process.env.PORT || 5000;
 
 (async function start() {
   await connectDB();
-  await seedDefaultAdmin();
+  await seedDefaultUsers();
 
   app.listen(PORT, () => {
     console.log(`[SERVER] Smart Polling Allocation API running on http://localhost:${PORT}`);

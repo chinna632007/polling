@@ -438,8 +438,9 @@ function buildTemplate(kind) {
 // ---------------------------------------------------------------------------
 
 /** Officer List (all officers) -> XLSX buffer */
-async function officerReport() {
-  const officers = await Officer.find().sort({ officerId: 1 }).lean();
+/** Officer master list -> XLSX buffer (filter = role-scoped query). */
+async function officerReport(filter = {}) {
+  const officers = await Officer.find(filter).sort({ officerId: 1 }).lean();
   const rows = officers.map((o) => ({
     'Officer ID': o.officerId,
     'Officer Name': o.officerName,
@@ -457,9 +458,9 @@ async function officerReport() {
   return toXlsxBuffer(rows, 'Officers');
 }
 
-/** Booth List (all booths) -> XLSX buffer */
-async function boothReport() {
-  const booths = await Booth.find().sort({ boothId: 1 }).lean();
+/** Booth List -> XLSX buffer (filter = role-scoped query). */
+async function boothReport(filter = {}) {
+  const booths = await Booth.find(filter).sort({ boothId: 1 }).lean();
   const rows = booths.map((b) => ({
     'Booth ID': b.boothId,
     'Booth Number': b.boothNumber,
@@ -506,9 +507,9 @@ async function allocationReport(filter = {}) {
   return toXlsxBuffer(rows, 'Allocations');
 }
 
-/** Unallocated Officers report. */
-async function unallocatedOfficersReport() {
-  const records = await Allocation.find({ status: 'Unallocated' })
+/** Unallocated Officers report (filter = role-scoped query). */
+async function unallocatedOfficersReport(filter = {}) {
+  const records = await Allocation.find({ status: 'Unallocated', ...filter })
     .populate('officer')
     .lean();
   const rows = records.map((a) => ({

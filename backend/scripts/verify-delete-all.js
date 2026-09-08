@@ -1,4 +1,4 @@
-/**
+ /**
  * verify-delete-all.js
  * =====================
  * End-to-end check of the "Delete All Files" button:

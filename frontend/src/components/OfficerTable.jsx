@@ -12,6 +12,9 @@ export default function OfficerTable({ officers = [], onEdit, onDelete, loading 
     return <p className="empty-state">No officers found. Upload or add one to begin.</p>;
   }
 
+  // Role-aware: when the logged-in user may not edit/delete, hide the column entirely.
+  const showActions = Boolean(onEdit) || Boolean(onDelete);
+
   return (
     <div className="table-wrap">
       <table className="table">
@@ -26,7 +29,7 @@ export default function OfficerTable({ officers = [], onEdit, onDelete, loading 
             <th>Mandal</th>
             <th>District</th>
             <th>PIN</th>
-            <th className="col-actions">Actions</th>
+            {showActions ? <th className="col-actions">Actions</th> : null}
           </tr>
         </thead>
         <tbody>
@@ -45,20 +48,26 @@ export default function OfficerTable({ officers = [], onEdit, onDelete, loading 
               </td>
               <td>{o.district || '—'}</td>
               <td className="mono">{o.pinCode || '—'}</td>
-              <td className="col-actions">
-                <div className="row-actions">
-                  <button type="button" className="btn btn-ghost btn-xs" onClick={() => onEdit(o)}>
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-danger btn-xs"
-                    onClick={() => onDelete(o)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </td>
+              {showActions ? (
+                <td className="col-actions">
+                  <div className="row-actions">
+                    {onEdit ? (
+                      <button type="button" className="btn btn-ghost btn-xs" onClick={() => onEdit(o)}>
+                        Edit
+                      </button>
+                    ) : null}
+                    {onDelete ? (
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-xs"
+                        onClick={() => onDelete(o)}
+                      >
+                        Delete
+                      </button>
+                    ) : null}
+                  </div>
+                </td>
+              ) : null}
             </tr>
           ))}
         </tbody>

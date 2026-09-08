@@ -1,5 +1,6 @@
 const express = require('express');
 const excelService = require('../services/excelService');
+const roleService = require('../services/roleService');
 const { protect } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -16,10 +17,17 @@ function sendWorkbook(res, buffer, filename) {
   return res.send(buffer);
 }
 
+/**
+ * Every report is scoped server-side: Mandal Officers may only download the
+ * data of their assigned Mandal; SUPER_ADMIN / ALLOCATION_OFFICER download
+ * the full dataset.
+ */
+
 // GET /api/reports/officers-excel
 router.get('/officers-excel', async (req, res, next) => {
   try {
-    sendWorkbook(res, await excelService.officerReport(), 'officers-report.xlsx');
+    const scope = roleService.scopeFilter(req.user) || {};
+    sendWorkbook(res, await excelService.officerReport(scope), 'officers-report.xlsx');
   } catch (error) {
     next(error);
   }
@@ -28,7 +36,8 @@ router.get('/officers-excel', async (req, res, next) => {
 // GET /api/reports/booths-excel
 router.get('/booths-excel', async (req, res, next) => {
   try {
-    sendWorkbook(res, await excelService.boothReport(), 'booths-report.xlsx');
+    const scope = roleService.scopeFilter(req.user) || {};
+    sendWorkbook(res, await excelService.boothReport(scope), 'booths-report.xlsx');
   } catch (error) {
     next(error);
   }
@@ -37,7 +46,8 @@ router.get('/booths-excel', async (req, res, next) => {
 // GET /api/reports/allocation-excel
 router.get('/allocation-excel', async (req, res, next) => {
   try {
-    sendWorkbook(res, await excelService.allocationReport(), 'allocated-officers.xlsx');
+    const scope = roleService.scopeFilter(req.user) || {};
+    sendWorkbook(res, await excelService.allocationReport(scope), 'allocated-officers.xlsx');
   } catch (error) {
     next(error);
   }
@@ -46,7 +56,12 @@ router.get('/allocation-excel', async (req, res, next) => {
 // GET /api/reports/unallocated-officers
 router.get('/unallocated-officers', async (req, res, next) => {
   try {
-    sendWorkbook(res, await excelService.unallocatedOfficersReport(), 'unallocated-officers.xlsx');
+    const scope = roleService.scopeFilter(req.user) || {};
+    sendWorkbook(
+      res,
+      await excelService.unallocatedOfficersReport(scope),
+      'unallocated-officers.xlsx'
+    );
   } catch (error) {
     next(error);
   }
@@ -55,7 +70,8 @@ router.get('/unallocated-officers', async (req, res, next) => {
 // GET /api/reports/notifications-excel
 router.get('/notifications-excel', async (req, res, next) => {
   try {
-    sendWorkbook(res, await excelService.notificationReport(), 'notification-status.xlsx');
+    const notifScope = await roleService.notificationScopeFilter(req.user);
+    sendWorkbook(res, await excelService.notificationReport(notifScope), 'notification-status.xlsx');
   } catch (error) {
     next(error);
   }

@@ -125,16 +125,31 @@ function scoreSuitability(officer, booth, capacity) {
  *    concurrent runs can never over-allocate (rule 10).
  *  - Re-running is safe: already allocated officers are reported as skipped.
  *
+ * @param {string|null} [mandalName=null] - when provided, the run is scoped to
+ *        that single Mandal only (officers are never allocated outside their
+ *        own Mandal anyway, so this only limits which rows are processed).
  * @returns {Promise<object>} summary counters plus created allocation docs.
  */
-async function runAllocation() {
+async function runAllocation(mandalName = null) {
   try {
+    // Optional Mandal scope: only process this one Mandal (case-insensitive).
+    const mandalFilter = mandalName
+      ? {
+          mandal: {
+            $regex: new RegExp(
+              `^${String(mandalName).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+              'i'
+            ),
+          },
+        }
+      : {};
+
     // Step 1: load booths and group by Mandal.
-    const booths = await Booth.find().lean();
+    const booths = await Booth.find(mandalFilter).lean();
     const boothsByMandal = groupBy(booths, (b) => mandalKey(b.mandal));
 
     // Step 2: load officers and group by Mandal.
-    const officers = await Officer.find().lean();
+    const officers = await Officer.find(mandalFilter).lean();
     const officersByMandal = groupBy(officers, (o) => mandalKey(o.mandal));
 
     // Officers who already hold a live allocation are never re-processed.

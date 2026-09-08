@@ -1,10 +1,21 @@
 const Booth = require('../models/Booth');
 const Allocation = require('../models/Allocation');
+const uploadBatchService = require('../services/uploadBatchService');
+const { scopeFilter } = require('../services/roleService');
 
-/** Builds a MongoDB query from the search/filter query-string params. */
+/** Escapes a user-provided value so it is safe inside a RegExp. */
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Builds a MongoDB query from the search/filter query-string params, then
+ * FORCES the logged-in user's data scope on top (Mandal Officers only ever
+ * see their assigned Mandal - any client-supplied mandal filter is ignored).
+ */
 function buildBoothFilter(req) {
   const filter = {};
-  const { search, mandal, ward } = req.query;
+  const { search, ward } = req.query;
 
   if (search) {
     const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
@@ -16,8 +27,18 @@ function buildBoothFilter(req) {
       { locality: re },
     ];
   }
-  if (mandal) filter.mandal = { $regex: new RegExp(`^${mandal.trim()}$`, 'i') };
   if (ward) filter.ward = ward;
+
+  const scope = scopeFilter(req.user);
+  if (scope) {
+    // Mandal Officer: force the assigned mandal (never trust client params).
+    Object.assign(filter, scope);
+  } else if (req.query.mandal) {
+    // Full-access roles may use the optional mandal filter.
+    filter.mandal = {
+      $regex: new RegExp(`^${escapeRegex(String(req.query.mandal).trim())}$`, 'i'),
+    };
+  }
   return filter;
 }
 
@@ -94,4 +115,97 @@ async function deleteBooth(req, res, next) {
   }
 }
 
-module.exports = { getBooths, createBooth, updateBooth, deleteBooth, buildBoothFilter };
+/**
+ * GET /api/booths/grouped?search=&mandal=
+ * Returns every matching booth grouped by Mandal so the UI can render one
+ * separate section per Mandal (uploaded files must never be mixed together).
+ */
+async function getBoothsGrouped(req, res, next) {
+  try {
+    const filter = buildBoothFilter(req);
+    const booths = await Booth.find(filter).sort({ mandal: 1, boothId: 1 }).lean();
+
+    const groups = new Map();
+    for (const booth of booths) {
+      const key = booth.mandal || 'Unspecified';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(booth);
+    }
+
+    const data = [...groups.entries()]
+      .map(([mandal, list]) => ({
+        mandal,
+        total: list.length,
+        booths: list,
+        requiredOfficers: list.reduce((sum, b) => sum + (b.requiredOfficers || 0), 0),
+        allocatedOfficers: list.reduce((sum, b) => sum + (b.allocatedOfficerCount || 0), 0),
+      }))
+      .sort((a, b) => a.mandal.localeCompare(b.mandal));
+
+    return res.json({
+      success: true,
+      data,
+      totalBooths: booths.length,
+      totalMandals: groups.size,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * DELETE /api/booths/all?mandal=
+ * Bulk delete - removes every booth (optionally scoped to a single Mandal,
+ * i.e. "delete this uploaded file's data") together with:
+ *   - all allocations pointing at those booths (officers simply become free
+ *     again - they are never deleted here),
+ *   - upload-batch records whose rows are all gone ("entire uploaded file").
+ */
+async function deleteAllBooths(req, res, next) {
+  try {
+    const filter = {};
+    if (req.query.mandal) {
+      filter.mandal = { $regex: new RegExp(`^${escapeRegex(req.query.mandal.trim())}$`, 'i') };
+    }
+
+    const booths = await Booth.find(filter).select('_id boothId').lean();
+    if (booths.length === 0) {
+      return res.status(404).json({ success: false, message: 'No booths found to delete' });
+    }
+    const ids = booths.map((b) => b._id);
+
+    // Cascade: remove any allocations that referenced these booths so no
+    // orphaned records remain (officers keep existing, just unallocated).
+    const delAllocs = await Allocation.deleteMany({ booth: { $in: ids } });
+    const delBooths = await Booth.deleteMany({ _id: { $in: ids } });
+
+    // Drop upload-batch records that no longer contain any live booth.
+    const prunedBatches = await uploadBatchService.pruneUploadBatches('booths');
+
+    return res.json({
+      success: true,
+      message:
+        `Deleted ${delBooths.deletedCount} booth(s)` +
+        `${req.query.mandal ? ` in Mandal '${req.query.mandal}'` : ''} - removed ` +
+        `${delAllocs.deletedCount} allocation(s)` +
+        `${prunedBatches ? `, ${prunedBatches} uploaded file record(s) cleared` : ''}`,
+      removed: {
+        booths: delBooths.deletedCount || 0,
+        allocations: delAllocs.deletedCount || 0,
+        uploadBatches: prunedBatches,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = {
+  getBooths,
+  getBoothsGrouped,
+  createBooth,
+  updateBooth,
+  deleteBooth,
+  deleteAllBooths,
+  buildBoothFilter,
+};

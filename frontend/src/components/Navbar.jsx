@@ -1,8 +1,18 @@
 import { useAuth } from '../context/AuthContext';
+import { roleLabel } from '../utils/roles';
 
-/** Top bar with the page's brand strip, admin name and logout control. */
+/** Top bar with the page's brand strip, user info (name, role, mandal) and logout. */
 export default function Navbar({ onMenuClick }) {
-  const { admin, logout } = useAuth();
+  const { user, logout } = useAuth();
+
+  const subtitle = [
+    roleLabel(user?.role),
+    user?.role === 'MANDAL_OFFICER' && user?.assignedMandal
+      ? `Mandal: ${user.assignedMandal}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <header className="navbar">
@@ -23,15 +33,11 @@ export default function Navbar({ onMenuClick }) {
       <div className="navbar-right">
         <div className="navbar-admin">
           <span className="navbar-admin-avatar" aria-hidden="true">
-            {(admin?.username || 'A').charAt(0).toUpperCase()}
+            {(user?.username || 'A').charAt(0).toUpperCase()}
           </span>
           <div className="navbar-admin-info">
-            <span className="navbar-admin-name">
-              {admin?.name || admin?.username || 'admin'}
-            </span>
-            <span className="navbar-admin-role">
-              Administrator{admin?.name ? ` · ${admin.username}` : ''}
-            </span>
+            <span className="navbar-admin-name">{user?.name || user?.username || 'user'}</span>
+            <span className="navbar-admin-role">{subtitle || 'Signed in'}</span>
           </div>
         </div>
         <button type="button" className="btn btn-ghost btn-sm" onClick={logout}>

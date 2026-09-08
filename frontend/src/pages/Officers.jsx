@@ -1,9 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import api, { getErrorMessage } from '../services/api';
 import OfficerTable from '../components/OfficerTable';
+import MandalSection from '../components/MandalSection';
 import Spinner from '../components/Spinner';
 import Toast from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
+import { useAuth } from '../context/AuthContext';
+import { canManageData, isSuperAdmin } from '../utils/roles';
 
 const EMPTY_FORM = {
   officerId: '',
@@ -21,12 +24,15 @@ const EMPTY_FORM = {
 };
 
 export default function Officers() {
-  const [officers, setOfficers] = useState([]);
+  const { user } = useAuth();
+  const canManage = canManageData(user);
+  const isAdmin = isSuperAdmin(user);
+
+  // Officers grouped per Mandal (one section per uploaded file's Mandal).
+  const [groups, setGroups] = useState([]);
+  const [totalOfficers, setTotalOfficers] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [mandal, setMandal] = useState('');
-  const [page, setPage] = useState(1);
-  const [pagination, setPagination] = useState({ total: 0, pages: 1 });
   const [notify, setNotify] = useState(null);
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -37,30 +43,37 @@ export default function Officers() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
+  // "Delete All" confirmation state (every officer on the page).
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
+
+  // "Delete Mandal" confirmation state (one section = one uploaded file).
+  const [deleteMandalTarget, setDeleteMandalTarget] = useState(null);
+  const [deletingMandal, setDeletingMandal] = useState(false);
+
   const fetchOfficers = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { page };
+      const params = {};
       if (search) params.search = search;
-      if (mandal) params.mandal = mandal;
-      const { data } = await api.get('/api/officers', { params });
-      setOfficers(data.data);
-      setPagination(data.pagination);
+      const { data } = await api.get('/api/officers/grouped', { params });
+      setGroups(data.data || []);
+      setTotalOfficers(data.totalOfficers || 0);
     } catch (err) {
       setNotify({ message: getErrorMessage(err), type: 'error' });
     } finally {
       setLoading(false);
     }
-  }, [page, search, mandal]);
+  }, [search]);
 
   useEffect(() => {
     fetchOfficers().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, search, mandal]);
+  }, [fetchOfficers]);
 
-  const openCreate = () => {
+  /** Opens the Add modal, optionally pre-filling the section's Mandal. */
+  const openCreate = (mandal = '') => {
     setEditing(null);
-    setForm({ ...EMPTY_FORM });
+    setForm({ ...EMPTY_FORM, mandal });
     setModalOpen(true);
   };
 
@@ -120,6 +133,49 @@ export default function Officers() {
     }
   };
 
+  /** Wipes EVERY officer (all Mandals) plus their allocations/notifications. */
+  const doDeleteAll = async () => {
+    setDeletingAll(true);
+    try {
+      const { data } = await api.delete('/api/officers/all');
+      setNotify({
+        message: data.message || 'All officers and their related data were deleted',
+        type: 'success',
+        duration: 8000,
+      });
+      setConfirmDeleteAll(false);
+      await fetchOfficers();
+    } catch (err) {
+      setNotify({ message: getErrorMessage(err), type: 'error', duration: 8000 });
+      setConfirmDeleteAll(false);
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
+  /** Deletes one Mandal section only (that uploaded file's data). */
+  const doDeleteMandal = async () => {
+    if (!deleteMandalTarget) return;
+    setDeletingMandal(true);
+    try {
+      const { data } = await api.delete(
+        `/api/officers/all?mandal=${encodeURIComponent(deleteMandalTarget)}`
+      );
+      setNotify({
+        message: data.message || `Deleted all officers in Mandal '${deleteMandalTarget}'`,
+        type: 'success',
+        duration: 8000,
+      });
+      setDeleteMandalTarget(null);
+      await fetchOfficers();
+    } catch (err) {
+      setNotify({ message: getErrorMessage(err), type: 'error', duration: 8000 });
+      setDeleteMandalTarget(null);
+    } finally {
+      setDeletingMandal(false);
+    }
+  };
+
   return (
     <div className="page">
       {notify ? <Toast {...notify} onClose={() => setNotify(null)} /> : null}
@@ -127,11 +183,30 @@ export default function Officers() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Officers</h1>
-          <p className="page-subtitle">Manage election officers and their residential addresses</p>
+          <p className="page-subtitle">
+            {totalOfficers} officer(s) in {groups.length} Mandal group(s) — each uploaded file is
+            shown and managed separately
+          </p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={openCreate}>
-          + Add Officer
-        </button>
+        <div className="page-actions">
+          {isAdmin ? (
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={() => setConfirmDeleteAll(true)}
+              disabled={deletingAll || totalOfficers === 0}
+            >
+              🗑 Delete All
+            </button>
+          ) : null}
+          {canManage ? (
+            <button type="button" className="btn btn-primary" onClick={() => openCreate()}>
+              + Add Officer
+            </button>
+          ) : (
+            <span className="badge badge-navy">View only</span>
+          )}
+        </div>
       </div>
 
       <div className="toolbar card">
@@ -139,68 +214,60 @@ export default function Officers() {
           className="input"
           placeholder="Search ID / name / mobile / locality"
           value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
+          onChange={(e) => setSearch(e.target.value)}
         />
-        <input
-          className="input"
-          placeholder="Filter by Mandal"
-          value={mandal}
-          onChange={(e) => {
-            setMandal(e.target.value);
-            setPage(1);
-          }}
-        />
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => {
-            setSearch('');
-            setMandal('');
-            setPage(1);
-          }}
-        >
+        <button type="button" className="btn btn-ghost" onClick={() => setSearch('')}>
           Clear
         </button>
       </div>
 
-      {loading && officers.length === 0 ? (
+      {loading && groups.length === 0 ? (
         <Spinner label="Loading officers…" />
+      ) : groups.length === 0 ? (
+        <p className="empty-state">
+          No officers found. Upload the Excel file or add an officer to begin.
+        </p>
       ) : (
-        <OfficerTable
-          officers={officers}
-          loading={false}
-          onEdit={openEdit}
-          onDelete={setDeleteTarget}
-        />
+        groups.map((g) => (
+          <MandalSection
+            key={g.mandal}
+            title={g.mandal}
+            badgeLabel="officers"
+            count={g.total}
+            actions={
+              <>
+                {canManage ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => openCreate(g.mandal)}
+                  >
+                    + Add
+                  </button>
+                ) : null}
+                {isAdmin ? (
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={() => setDeleteMandalTarget(g.mandal)}
+                  >
+                    Delete Mandal
+                  </button>
+                ) : null}
+              </>
+            }
+          >
+            <OfficerTable
+              officers={g.officers}
+              loading={false}
+              onEdit={canManage ? openEdit : undefined}
+              onDelete={isAdmin ? setDeleteTarget : undefined}
+            />
+          </MandalSection>
+        ))
       )}
 
-      {pagination.pages > 1 && (
-        <div className="pagination">
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            Prev
-          </button>
-          <span className="muted">
-            Page {page} / {pagination.pages}
-          </span>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            disabled={page >= pagination.pages}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Next
-          </button>
-        </div>
-      )}
-{modalOpen && (
+      {modalOpen && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
           <div className="modal modal-wide">
             <h3 className="modal-title">{editing ? 'Edit Officer' : 'Add Officer'}</h3>
@@ -332,6 +399,28 @@ export default function Officers() {
         loading={deleting}
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ConfirmModal
+        open={confirmDeleteAll}
+        title="Delete ALL Officers"
+        message="This permanently deletes every officer in every Mandal, together with all of their allocations and notifications, and clears the related uploaded file records. This cannot be undone."
+        confirmLabel="Delete Everything"
+        tone="danger"
+        loading={deletingAll}
+        onConfirm={doDeleteAll}
+        onCancel={() => setConfirmDeleteAll(false)}
+      />
+
+      <ConfirmModal
+        open={Boolean(deleteMandalTarget)}
+        title={`Delete Mandal '${deleteMandalTarget}'`}
+        message={`This deletes the entire uploaded data for Mandal '${deleteMandalTarget}' (officers, their allocations and notifications). Other Mandals are not affected. This cannot be undone.`}
+        confirmLabel="Delete Mandal"
+        tone="danger"
+        loading={deletingMandal}
+        onConfirm={doDeleteMandal}
+        onCancel={() => setDeleteMandalTarget(null)}
       />
     </div>
   );

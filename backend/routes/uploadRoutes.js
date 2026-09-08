@@ -8,12 +8,14 @@ const {
   deleteUploadBatch,
   deleteAllUploads,
 } = require('../controllers/uploadController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, authorize } = require('../middleware/authMiddleware');
+const { ROLES } = require('../services/roleService');
 const { uploadSingleExcel } = require('../middleware/uploadMiddleware');
 const { handleValidationErrors } = require('../middleware/validationMiddleware');
 
 const router = express.Router();
-router.use(protect); // all upload endpoints require a valid JWT
+// Excel uploads import master data - only the Super Admin may upload files.
+router.use(protect, authorize(ROLES.SUPER_ADMIN));
 
 // GET /api/upload/history - list every committed upload (must be before /:id)
 router.get('/history', getUploadHistory);

@@ -1,11 +1,24 @@
 const express = require('express');
-const { body, param } = require('express-validator');
-const { getBooths, createBooth, updateBooth, deleteBooth } = require('../controllers/boothController');
-const { protect } = require('../middleware/authMiddleware');
+const { body, param, query } = require('express-validator');
+const {
+  getBooths,
+  getBoothsGrouped,
+  createBooth,
+  updateBooth,
+  deleteBooth,
+  deleteAllBooths,
+} = require('../controllers/boothController');
+const { protect, authorize } = require('../middleware/authMiddleware');
+const { ROLES } = require('../services/roleService');
 const { handleValidationErrors } = require('../middleware/validationMiddleware');
 
 const router = express.Router();
 router.use(protect); // all booth endpoints require a valid JWT
+
+// Roles that may create/edit booth records.
+const MANAGER = [ROLES.SUPER_ADMIN, ROLES.ALLOCATION_OFFICER];
+// Only the Super Admin may delete master data.
+const EXECUTIVE = [ROLES.SUPER_ADMIN];
 
 const boothBodyRules = [
   body('boothId').trim().notEmpty().withMessage('Booth ID is required'),
@@ -21,25 +34,44 @@ const boothBodyRules = [
   body('mandal').trim().notEmpty().withMessage('Mandal is required'),
 ];
 
+// GET /api/booths/grouped - booths grouped per Mandal (separate sections)
+router.get('/grouped', getBoothsGrouped);
+
 // GET /api/booths
 router.get('/', getBooths);
 
-// POST /api/booths
-router.post('/', boothBodyRules, handleValidationErrors, createBooth);
+// POST /api/booths - create booth (Super Admin / Allocation Officer only)
+router.post('/', boothBodyRules, handleValidationErrors, authorize(...MANAGER), createBooth);
 
-// PUT /api/booths/:id
+/**
+ * DELETE /api/booths/all[?mandal=X] - Super Admin only.
+ * Deletes EVERY booth (optionally only one Mandal's uploaded file data)
+ * together with any allocations pointing at those booths.
+ * Declared BEFORE '/:id' so "all" is never treated as a booth id.
+ */
+router.delete(
+  '/all',
+  [query('mandal').optional({ checkFalsy: true }).isString().trim()],
+  handleValidationErrors,
+  authorize(...EXECUTIVE),
+  deleteAllBooths
+);
+
+// PUT /api/booths/:id - update booth (Super Admin / Allocation Officer only)
 router.put(
   '/:id',
   [param('id').isMongoId().withMessage('Invalid booth id'), ...boothBodyRules],
   handleValidationErrors,
+  authorize(...MANAGER),
   updateBooth
 );
 
-// DELETE /api/booths/:id
+// DELETE /api/booths/:id - Super Admin only
 router.delete(
   '/:id',
   param('id').isMongoId().withMessage('Invalid booth id'),
   handleValidationErrors,
+  authorize(...EXECUTIVE),
   deleteBooth
 );
 

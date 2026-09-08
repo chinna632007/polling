@@ -28,6 +28,9 @@ export default function AllocationTable({
     </p>;
   }
 
+  // Role-aware: when the user cannot manage allocations, hide the actions column.
+  const showActions = Boolean(onApprove) || Boolean(onReallocate) || Boolean(onCancel) || Boolean(onSendNotification);
+
   return (
     <div className="table-wrap">
       <table className="table table-allocations">
@@ -44,7 +47,7 @@ export default function AllocationTable({
             <th>Address Compatibility</th>
             <th>Status</th>
             <th>Approval</th>
-            <th className="col-actions">Actions</th>
+            {showActions ? <th className="col-actions">Actions</th> : null}
           </tr>
         </thead>
         <tbody>
@@ -81,48 +84,54 @@ export default function AllocationTable({
                     {a.adminApproved ? 'Approved' : 'Pending Approval'}
                   </Badge>
                 </td>
-                <td className="col-actions">
-                  <div className="row-actions row-actions-wrap">
-                    {allocated && !a.adminApproved && (
-                      <button
-                        type="button"
-                        className="btn btn-success btn-xs"
-                        onClick={() => onApprove(a)}
-                      >
-                        Approve
-                      </button>
-                    )}
-                    {allocated && (
-                      <>
+                {showActions ? (
+                  <td className="col-actions">
+                    <div className="row-actions row-actions-wrap">
+                      {allocated && !a.adminApproved && onApprove ? (
                         <button
                           type="button"
-                          className="btn btn-ghost btn-xs"
-                          onClick={() => onReallocate(a)}
+                          className="btn btn-success btn-xs"
+                          onClick={() => onApprove(a)}
                         >
-                          Reallocate
+                          Approve
                         </button>
+                      ) : null}
+                      {allocated && (
+                        <>
+                          {onReallocate ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-xs"
+                              onClick={() => onReallocate(a)}
+                            >
+                              Reallocate
+                            </button>
+                          ) : null}
+                          {onCancel ? (
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-xs"
+                              onClick={() => onCancel(a)}
+                            >
+                              Cancel
+                            </button>
+                          ) : null}
+                        </>
+                      )}
+                      {allocated && a.adminApproved && onSendNotification ? (
                         <button
                           type="button"
-                          className="btn btn-danger btn-xs"
-                          onClick={() => onCancel(a)}
+                          className="btn btn-primary btn-xs"
+                          disabled={sendingIds.has(a._id)}
+                          onClick={() => onSendNotification(a)}
                         >
-                          Cancel
+                          {sendingIds.has(a._id) ? 'Sending…' : 'Send Notification'}
                         </button>
-                      </>
-                    )}
-                    {allocated && a.adminApproved && (
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-xs"
-                        disabled={sendingIds.has(a._id)}
-                        onClick={() => onSendNotification(a)}
-                      >
-                        {sendingIds.has(a._id) ? 'Sending…' : 'Send Notification'}
-                      </button>
-                    )}
-                    {!allocated && <span className="muted">—</span>}
-                  </div>
-                </td>
+                      ) : null}
+                      {!allocated && <span className="muted">—</span>}
+                    </div>
+                  </td>
+                ) : null}
               </tr>
             );
           })}

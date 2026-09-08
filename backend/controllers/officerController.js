@@ -2,11 +2,22 @@ const Officer = require('../models/Officer');
 const Allocation = require('../models/Allocation');
 const Booth = require('../models/Booth');
 const Notification = require('../models/Notification');
+const uploadBatchService = require('../services/uploadBatchService');
+const { scopeFilter } = require('../services/roleService');
 
-/** Builds a MongoDB query from the search/filter query-string params. */
+/** Escapes a user-provided value so it is safe inside a RegExp. */
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Builds a MongoDB query from the search/filter query-string params, then
+ * FORCES the logged-in user's data scope on top (Mandal Officers only ever
+ * see their assigned Mandal - any client-supplied mandal filter is ignored).
+ */
 function buildOfficerFilter(req) {
   const filter = {};
-  const { search, mandal, ward, designation } = req.query;
+  const { search, ward, designation } = req.query;
 
   if (search) {
     const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
@@ -17,9 +28,19 @@ function buildOfficerFilter(req) {
       { locality: re },
     ];
   }
-  if (mandal) filter.mandal = { $regex: new RegExp(`^${mandal.trim()}$`, 'i') };
   if (ward) filter.ward = ward;
   if (designation) filter.designation = designation;
+
+  const scope = scopeFilter(req.user);
+  if (scope) {
+    // Mandal Officer: force the assigned mandal (never trust client params).
+    Object.assign(filter, scope);
+  } else if (req.query.mandal) {
+    // Full-access roles may use the optional mandal filter.
+    filter.mandal = {
+      $regex: new RegExp(`^${escapeRegex(String(req.query.mandal).trim())}$`, 'i'),
+    };
+  }
   return filter;
 }
 
@@ -112,4 +133,112 @@ async function deleteOfficer(req, res, next) {
   }
 }
 
-module.exports = { getOfficers, createOfficer, updateOfficer, deleteOfficer, buildOfficerFilter };
+/**
+ * GET /api/officers/grouped?search=&mandal=
+ * Returns every matching officer grouped by Mandal so the UI can render one
+ * separate section per Mandal (uploaded files are processed mandal-wise and
+ * must never be mixed together).
+ */
+async function getOfficersGrouped(req, res, next) {
+  try {
+    const filter = buildOfficerFilter(req);
+    const officers = await Officer.find(filter).sort({ mandal: 1, officerId: 1 }).lean();
+
+    const groups = new Map();
+    for (const officer of officers) {
+      const key = officer.mandal || 'Unspecified';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(officer);
+    }
+
+    const data = [...groups.entries()]
+      .map(([mandal, list]) => ({ mandal, total: list.length, officers: list }))
+      .sort((a, b) => a.mandal.localeCompare(b.mandal));
+
+    return res.json({
+      success: true,
+      data,
+      totalOfficers: officers.length,
+      totalMandals: groups.size,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * DELETE /api/officers/all?mandal=
+ * Bulk delete - removes every officer (optionally scoped to a single Mandal,
+ * i.e. "delete this uploaded file's data") together with:
+ *   - all of their allocations (booth counters corrected),
+ *   - all of their SMS notifications,
+ *   - upload-batch records whose rows are all gone ("entire uploaded file").
+ */
+async function deleteAllOfficers(req, res, next) {
+  try {
+    const filter = {};
+    if (req.query.mandal) {
+      filter.mandal = { $regex: new RegExp(`^${escapeRegex(req.query.mandal.trim())}$`, 'i') };
+    }
+
+    const officers = await Officer.find(filter).select('_id officerId').lean();
+    if (officers.length === 0) {
+      return res.status(404).json({ success: false, message: 'No officers found to delete' });
+    }
+    const ids = officers.map((o) => o._id);
+
+    // 1. Cascade: remove the officers' allocations and free the booth slots.
+    const allocs = await Allocation.find({ officer: { $in: ids } }).select('booth').lean();
+    const delAllocs = await Allocation.deleteMany({ officer: { $in: ids } });
+
+    const boothCounts = {};
+    for (const a of allocs) {
+      const boothId = a.booth ? String(a.booth) : '';
+      if (boothId) boothCounts[boothId] = (boothCounts[boothId] || 0) + 1;
+    }
+    for (const [boothId, count] of Object.entries(boothCounts)) {
+      // Clamp so the counter can never go below zero.
+      const booth = await Booth.findById(boothId).lean();
+      if (booth) {
+        await Booth.updateOne(
+          { _id: boothId },
+          { allocatedOfficerCount: Math.max(0, booth.allocatedOfficerCount - count) }
+        );
+      }
+    }
+
+    // 2. Notifications + the officers themselves.
+    const delNotifs = await Notification.deleteMany({ officer: { $in: ids } });
+    const delOfficers = await Officer.deleteMany({ _id: { $in: ids } });
+
+    // 3. Drop upload-batch records that no longer contain any live officer.
+    const prunedBatches = await uploadBatchService.pruneUploadBatches('officers');
+
+    return res.json({
+      success: true,
+      message:
+        `Deleted ${delOfficers.deletedCount} officer(s)` +
+        `${req.query.mandal ? ` in Mandal '${req.query.mandal}'` : ''} - removed ` +
+        `${delAllocs.deletedCount} allocation(s), ${delNotifs.deletedCount} notification(s)` +
+        `${prunedBatches ? `, ${prunedBatches} uploaded file record(s) cleared` : ''}`,
+      removed: {
+        officers: delOfficers.deletedCount || 0,
+        allocations: delAllocs.deletedCount || 0,
+        notifications: delNotifs.deletedCount || 0,
+        uploadBatches: prunedBatches,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = {
+  getOfficers,
+  getOfficersGrouped,
+  createOfficer,
+  updateOfficer,
+  deleteOfficer,
+  deleteAllOfficers,
+  buildOfficerFilter,
+};

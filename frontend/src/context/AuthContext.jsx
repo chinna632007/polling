@@ -1,40 +1,49 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import api from '../services/api';
+import { homeForRole, roleLabel, ROLES } from '../utils/roles';
 
 const AuthContext = createContext(null);
 
 const TOKEN_KEY = 'token';
-const ADMIN_KEY = 'admin';
+const USER_KEY = 'user';
 
 /**
  * Auth state + login/logout. The token is stored in localStorage so the
- * admin stays logged in across page refreshes.
+ * user stays logged in across page refreshes. The logged-in `user` object
+ * (role, assignedMandal, ...) is persisted too so the UI can render the
+ * correct role-based menus immediately.
  *
  * Bootstrap flow: on startup we call GET /api/auth/boot/status. If the
- * DB has zero admin accounts the backend responds with
- * { bootstrapMode: true } and useAuth.isBootstrapMode becomes true.
- *
- * In that case the Register page is reachable WITHOUT authentication and
- * calls POST /api/auth/boot (public) to create the first admin, which also
- * returns a signed JWT that is stored here via bootstrap().
+ * DB has zero user accounts the backend responds with bootstrapMode:true
+ * and the Register page becomes reachable WITHOUT authentication so the
+ * first SUPER_ADMIN account can be created.
  */
 export function AuthProvider({ children }) {
-  const [admin, setAdmin] = useState(() => {
+  const [user, setUser] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem(ADMIN_KEY) || 'null');
+      const parsed = JSON.parse(localStorage.getItem(USER_KEY) || 'null');
+      // Sessions saved before the role system existed carry no `role`, which
+      // would break role-based routing (infinite redirect -> white page).
+      // Treat them as logged out instead.
+      if (parsed && !ROLES[parsed.role]) {
+        localStorage.removeItem(USER_KEY);
+        localStorage.removeItem(TOKEN_KEY);
+        return null;
+      }
+      return parsed;
     } catch {
+      localStorage.removeItem(USER_KEY);
       return null;
     }
   });
 
-  // True when the backend reports zero admin accounts in the DB.
+  // True when the backend reports zero users in the DB.
   const [isBootstrapMode, setBootstrapMode] = useState(false);
   const [bootstrapChecked, setBootstrapChecked] = useState(false);
 
-  // Probe the backend once on mount (only if not already logged in) to
-  // determine whether bootstrap mode is active.
+  // Probe the backend once on mount (only if not already logged in).
   useEffect(() => {
-    if (admin) {
+    if (user) {
       setBootstrapMode(false);
       setBootstrapChecked(true);
       return;
@@ -50,8 +59,6 @@ export function AuthProvider({ children }) {
       })
       .catch(() => {
         if (!cancelled) {
-          // If the backend is unreachable, assume non-bootstrap so the
-          // standard login flow is shown.
           setBootstrapMode(false);
           setBootstrapChecked(true);
         }
@@ -59,43 +66,58 @@ export function AuthProvider({ children }) {
     return () => {
       cancelled = true;
     };
-  }, [admin]);
+  }, [user]);
 
-  const login = useCallback(async (username, password) => {
-    const { data } = await api.post('/api/auth/login', { username, password });
-    localStorage.setItem(TOKEN_KEY, data.token);
-    localStorage.setItem(ADMIN_KEY, JSON.stringify(data.admin));
-    setAdmin(data.admin);
+  const persist = useCallback((token, userPayload) => {
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(USER_KEY, JSON.stringify(userPayload));
+    setUser(userPayload);
     setBootstrapMode(false);
-    return data.admin;
   }, []);
+
+  const login = useCallback(
+    async (username, password) => {
+      const { data } = await api.post('/api/auth/login', { username, password });
+      persist(data.token, data.user);
+      return data.user;
+    },
+    [persist]
+  );
 
   /**
    * Called after a successful /api/auth/boot request. Persists the token
-   * and admin to localStorage (auto-login) and exits bootstrap mode.
+   * and user (auto-login) and exits bootstrap mode.
    */
-  const bootstrap = useCallback((payload) => {
-    localStorage.setItem(TOKEN_KEY, payload.token);
-    localStorage.setItem(ADMIN_KEY, JSON.stringify(payload.admin));
-    setAdmin(payload.admin);
-    setBootstrapMode(false);
-    return payload.admin;
-  }, []);
+  const bootstrap = useCallback(
+    (payload) => {
+      persist(payload.token, payload.user);
+      return payload.user;
+    },
+    [persist]
+  );
 
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(ADMIN_KEY);
-    setAdmin(null);
+    localStorage.removeItem(USER_KEY);
+    setUser(null);
   }, []);
 
+  const isAuthenticated = Boolean(user) && Boolean(localStorage.getItem(TOKEN_KEY));
+
   const value = {
-    admin,
-    isAuthenticated: Boolean(admin) && Boolean(localStorage.getItem(TOKEN_KEY)),
+    user,
+    // Backward-compatible alias (older components read `admin`).
+    admin: user,
+    isAuthenticated,
     isBootstrapMode,
     bootstrapChecked,
     login,
     logout,
     bootstrap,
+    // Role helpers (thrown-away object, no state updates on read).
+    role: user?.role,
+    roleLabel: user ? roleLabel(user.role) : '',
+    homePath: user ? homeForRole(user.role) : '/',
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
