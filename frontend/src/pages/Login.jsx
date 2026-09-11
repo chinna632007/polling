@@ -1,5 +1,11 @@
+/**
+ * Login.jsx
+ * =========
+ * Single Main Admin login. Username + password only; no registration, no
+ * demo accounts, no role selection.
+ */
 import { useState } from 'react';
-import { useNavigate, Navigate, Link } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { homeForRole } from '../utils/roles';
 import PasswordInput from '../components/PasswordInput';
@@ -8,7 +14,7 @@ import Spinner from '../components/Spinner';
 import { getErrorMessage } from '../services/api';
 
 export default function Login() {
-  const { login, user, isBootstrapMode, bootstrapChecked } = useAuth();
+  const { login, user, bootstrapChecked } = useAuth();
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -54,29 +60,22 @@ export default function Login() {
         </div>
         <h1 className="login-title">Smart Polling Booth Officer Allocation</h1>
         <p className="login-subtitle">
-          Secure role-based Officer Allocation &amp; Notification System
+          Main Admin Login
         </p>
 
         {error ? (
           <Toast message={error} type="error" onClose={() => setError(null)} />
         ) : null}
 
-        {isBootstrapMode ? (
-          <Toast
-            message="No administrator account exists yet. Please create the first Super Admin account below."
-            type="info"
-          />
-        ) : null}
-
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="form-group">
-            <label htmlFor="username">Username or Email</label>
+            <label htmlFor="username">Username</label>
             <input
               id="username"
               className="input"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter username or email"
+              placeholder="Enter admin username"
               autoComplete="username"
               required
             />
@@ -96,31 +95,15 @@ export default function Login() {
           </button>
         </form>
 
-        {isBootstrapMode && (
-          <div className="bootstrap-cta">
-            <Link to="/register" className="btn btn-secondary btn-block">
-              Create First Super Admin Account
-            </Link>
+        <div className="login-demo">
+          <p className="login-demo-title">Development credentials</p>
+          <div className="login-demo-grid">
+            <span><strong>admin</strong> / admin123</span>
           </div>
-        )}
-
-        {!isBootstrapMode && (
-          <div className="login-demo">
-            <p className="login-demo-title">Demo accounts</p>
-            <div className="login-demo-grid">
-              <span><strong>admin</strong> / Admin@123 (Super Admin)</span>
-              <span><strong>allocator</strong> / Allocate@123 (Allocation Officer)</span>
-              <span><strong>mandal_kakinada</strong> / Mandal@123 (Kakinada)</span>
-              <span><strong>mandal_rajahmundry</strong> / Mandal@123 (Rajahmundry)</span>
-              <span><strong>officer001</strong> / Officer@123 (Booth Officer)</span>
-            </div>
-          </div>
-        )}
+        </div>
 
         <p className="login-foot">
-          {isBootstrapMode
-            ? 'No user account exists yet. Create one to get started.'
-            : 'Authorized personnel only · access is scoped to your role and assigned Mandal'}
+          Main Admin only · Authorized personnel only
         </p>
       </div>
     </div>

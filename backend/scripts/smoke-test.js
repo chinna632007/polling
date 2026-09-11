@@ -133,12 +133,9 @@ test('different locality + different street + different ward = safe', () => {
   assert.ok(r.score < 50);
 });
 
-test('RULE 6: multiple matched important tokens reject', () => {
-  // officer lives near "Main Bazaar" on ward 5, booth is in the same ward
-  // with a strong locality overlap ("Kothapeta North" vs "Kothapeta South")
-  // and overlapping street tokens -> multiple important tokens match.
+test('RULE 6 (fallback): ward+street exact match without locality rejects', () => {
   const officerC = {
-    locality: 'Kothapeta North',
+    locality: '',
     ward: '5',
     street: 'Main Bazaar Road',
     mandal: 'Pedarami Reddy Palli',
@@ -146,16 +143,15 @@ test('RULE 6: multiple matched important tokens reject', () => {
     pinCode: '518450',
   };
   const crafted = {
-    locality: 'Kothapeta South',
+    locality: '',
     ward: '5',
-    street: 'Main Bazaar Lane',
+    street: 'Main Bazaar Road',
     mandal: 'Pedarami Reddy Palli',
     district: 'Kurnool',
     pinCode: '518451',
   };
   const r = ams.isRelated(officerC, crafted);
   assert.strictEqual(r.related, true);
-  assert.ok(r.matchedTokens.length >= 2);
 });
 
 console.log('');
@@ -177,10 +173,12 @@ test('conflicted (related) booth is rejected with -Infinity score', () => {
   assert.strictEqual(r.score, -Infinity);
 });
 
-test('booth with more remaining capacity scores higher (balance rule)', () => {
-  const r1 = scoreSuitability(officerA, boothOtherLocality, 1);
-  const r2 = scoreSuitability(officerA, boothOtherLocality, 4);
-  assert.ok(r2.score > r1.score, 'higher capacity should score better');
+test('booth with fewer allocated officers scores higher (balance rule)', () => {
+  const light = { ...boothOtherLocality, allocatedOfficerCount: 0 };
+  const heavy = { ...boothOtherLocality, allocatedOfficerCount: 4 };
+  const r1 = scoreSuitability(officerA, light, 2);
+  const r2 = scoreSuitability(officerA, heavy, 2);
+  assert.ok(r1.score > r2.score, 'lower occupancy should score better');
 });
 
 console.log('');

@@ -5,6 +5,7 @@ const Officer = require('../models/Officer');
 const Booth = require('../models/Booth');
 const Allocation = require('../models/Allocation');
 const Notification = require('../models/Notification');
+const countService = require('../services/countService');
 
 const MAX_PREVIEW_ROWS = 50;
 
@@ -59,7 +60,7 @@ async function uploadOfficers(req, res, next) {
     if (validation.missingColumns.length > 0) {
       return res.status(400).json({
         success: false,
-        message: `Missing required columns: ${validation.missingColumns.join(', ')}`,
+        message: `Officer Excel file is missing the required column: ${validation.missingColumns[0]}`,
         missingColumns: validation.missingColumns,
       });
     }
@@ -112,7 +113,7 @@ async function uploadBooths(req, res, next) {
     if (validation.missingColumns.length > 0) {
       return res.status(400).json({
         success: false,
-        message: `Missing required columns: ${validation.missingColumns.join(', ')}`,
+        message: `Booth Excel file is missing the required column: ${validation.missingColumns[0]}`,
         missingColumns: validation.missingColumns,
       });
     }
@@ -220,19 +221,17 @@ async function deleteUploadBatch(req, res, next) {
           const delA = await Allocation.deleteMany({ officer: { $in: recordIds } });
           removed.allocations = delA.deletedCount || 0;
 
-          // 2. Fix counters on booths that are NOT part of this batch.
-          const boothCounts = {};
+          // 2. Recalculate counters on surviving booths from the real
+          // ALLOCATED allocation documents (never raw $inc of stale counts).
+          const affected = new Set();
           for (const a of allocs) {
             const boothId = a.booth ? String(a.booth) : '';
             if (boothId && !recordIdStrings.includes(boothId)) {
-              boothCounts[boothId] = (boothCounts[boothId] || 0) + 1;
+              affected.add(boothId);
             }
           }
-          for (const [boothId, count] of Object.entries(boothCounts)) {
-            await Booth.updateOne(
-              { _id: boothId },
-              { $inc: { allocatedOfficerCount: -count } }
-            );
+          for (const boothId of affected) {
+            await countService.recalculateBoothCounts(boothId);
           }
         }
 

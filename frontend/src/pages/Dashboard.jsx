@@ -64,10 +64,11 @@ export default function Dashboard() {
               tone="red"
             />
             <StatCard
-              label="Pending Approval"
-              value={stats.pendingApproval}
-              icon="⏳"
-              tone="amber"
+              label="Required Booth Slots"
+              value={stats.totalBoothCapacity}
+              icon="🪑"
+              tone="blue"
+              sub={`${stats.availableSlots} still open`}
             />
             <StatCard
               label="Notifications Sent"

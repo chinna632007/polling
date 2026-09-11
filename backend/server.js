@@ -57,112 +57,60 @@ app.use(errorHandler);
 
 // ------------------------------- Bootstrap -------------------------------------
 /**
- * Seeds the demo user accounts used by the role-based login system.
- * Demo accounts are created only when missing; in non-production environments
- * their passwords are kept in sync with the documented defaults every boot so
- * the example logins always work (disable with SEED_DEMO_PASSWORDS=false).
+ * Seeds ONLY the Main Admin account (single-login system).
  *
- * Seeded accounts:
- *   admin            / Admin@123   -> SUPER_ADMIN (admin user can be overridden
- *                                     via ADMIN_USERNAME / ADMIN_PASSWORD)
- *   allocator        / Allocate@123 -> ALLOCATION_OFFICER
- *   mandal_kakinada  / Mandal@123  -> MANDAL_OFFICER (Kakinada)
- *   mandal_rajahmundry / Mandal@123 -> MANDAL_OFFICER (Rajahmundry)
- *   officer001       / Officer@123 -> BOOTH_OFFICER (links to officer OFFICER001)
+ * - Creates ADMIN_USERNAME / ADMIN_PASSWORD (defaults: admin / admin123)
+ *   with a bcrypt hash when it does not exist.
+ * - Keeps the password in sync with the env value in development so the
+ *   documented login always works.
+ * - Deletes any other Admin documents (old demo/test accounts) WITHOUT
+ *   touching Officers, Booths, Allocations, Notifications or UploadBatches.
+ * - Resyncs booth counters from real ALLOCATED allocation documents.
  */
-async function seedDefaultUsers() {
-  const { ROLES } = require('./services/roleService');
+async function seedMainAdmin() {
   const bcrypt = require('bcryptjs');
+  const countService = require('./services/countService');
 
-  const demoUsers = [
-    {
-      username: (process.env.ADMIN_USERNAME || 'admin').toLowerCase(),
-      password: process.env.ADMIN_PASSWORD || 'Admin@123',
-      name: 'District Collector',
-      role: ROLES.SUPER_ADMIN,
-      district: process.env.ADMIN_DISTRICT || '',
-    },
-    {
-      username: 'allocator',
-      password: 'Allocate@123',
-      name: 'Allocation Officer',
-      role: ROLES.ALLOCATION_OFFICER,
-      district: '',
-    },
-    {
-      username: 'mandal_kakinada',
-      password: 'Mandal@123',
-      name: 'Mandal Officer - Kakinada',
-      role: ROLES.MANDAL_OFFICER,
-      assignedMandal: 'Kakinada',
-      district: '',
-    },
-    {
-      username: 'mandal_rajahmundry',
-      password: 'Mandal@123',
-      name: 'Mandal Officer - Rajahmundry',
-      role: ROLES.MANDAL_OFFICER,
-      assignedMandal: 'Rajahmundry',
-      district: '',
-    },
-    {
-      username: 'officer001',
-      password: 'Officer@123',
-      name: 'Booth Officer 001',
-      role: ROLES.BOOTH_OFFICER,
-      assignedOfficerId: 'OFFICER001',
-      assignedBooth: '',
-      district: '',
-    },
-  ];
-
+  const username = (process.env.ADMIN_USERNAME || 'admin').toLowerCase();
+  const password = process.env.ADMIN_PASSWORD || 'admin123';
   const production = process.env.NODE_ENV === 'production';
-  if (production && process.env.SEED_DEMO_USERS === 'false') {
-    console.log('[AUTH] Demo user seeding disabled by SEED_DEMO_USERS=false');
-    return;
+
+  const existing = await Admin.findOne({ username }).select('+password');
+  if (!existing) {
+    await Admin.create({
+      username,
+      password: await bcrypt.hash(password, 10),
+      name: 'Main Admin',
+      role: 'SUPER_ADMIN',
+      district: process.env.ADMIN_DISTRICT || '',
+      status: 'active',
+    });
+    console.log(`[AUTH] Created Main Admin account '${username}'`);
+  } else if (!production) {
+    const ok = await existing.comparePassword(password);
+    if (!ok) {
+      existing.password = await bcrypt.hash(password, 10);
+      await existing.save();
+      console.log(`[AUTH] Synced Main Admin password for '${username}'`);
+    }
   }
 
-  for (const demo of demoUsers) {
-    const existing = await Admin.findOne({ username: demo.username }).select('+password');
-    if (!existing) {
-      // eslint-disable-next-line no-await-in-loop
-      await Admin.create({ ...demo, password: await bcrypt.hash(demo.password, 10) });
-      console.log(`[AUTH] Seeded demo account '${demo.username}' (${demo.role})`);
-    } else {
-      let dirty = false;
-
-      // Backfill accounts created before the role system existed (they have no
-      // `role` field, which used to break role-based routing after login and
-      // made every authorize() check fail).
-      if (!existing.role) {
-        existing.role = demo.role;
-        if (demo.name && !existing.name) existing.name = demo.name;
-        if (demo.district && !existing.district) existing.district = demo.district;
-        if (demo.assignedMandal && !existing.assignedMandal) {
-          existing.assignedMandal = demo.assignedMandal;
-        }
-        if (demo.assignedOfficerId && !existing.assignedOfficerId) {
-          existing.assignedOfficerId = demo.assignedOfficerId;
-        }
-        dirty = true;
-        console.log(`[AUTH] Backfilled role of demo account '${demo.username}' -> ${demo.role}`);
-      }
-
-      // Keep documented demo passwords working in development.
-      if (!production && process.env.SEED_DEMO_PASSWORDS !== 'false') {
-        // eslint-disable-next-line no-await-in-loop
-        const ok = await existing.comparePassword(demo.password);
-        if (!ok) {
-          // eslint-disable-next-line no-await-in-loop
-          existing.password = await bcrypt.hash(demo.password, 10);
-          dirty = true;
-          console.log(`[AUTH] Updated password of demo account '${demo.username}'`);
-        }
-      }
-
-      // eslint-disable-next-line no-await-in-loop
-      if (dirty) await existing.save();
+  // Requirement A: remove ONLY demo/test auth accounts, never domain data.
+  try {
+    const removed = await Admin.deleteMany({ username: { $ne: username } });
+    if (removed.deletedCount > 0) {
+      console.log(`[AUTH] Removed ${removed.deletedCount} non-admin demo account(s)`);
     }
+  } catch (error) {
+    console.warn('[AUTH] Could not clean demo accounts:', error.message);
+  }
+
+  // Requirement B: booth counters are rebuilt from allocation documents.
+  try {
+    await countService.resyncAllBoothCounts();
+    console.log('[BOOT] Booth counters resynced from ALLOCATED allocations');
+  } catch (error) {
+    console.warn('[BOOT] Could not resync booth counts:', error.message);
   }
 }
 
@@ -170,7 +118,7 @@ const PORT = process.env.PORT || 5000;
 
 (async function start() {
   await connectDB();
-  await seedDefaultUsers();
+  await seedMainAdmin();
 
   app.listen(PORT, () => {
     console.log(`[SERVER] Smart Polling Allocation API running on http://localhost:${PORT}`);

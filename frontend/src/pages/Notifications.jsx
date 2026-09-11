@@ -4,7 +4,7 @@ import NotificationStatus from '../components/NotificationStatus';
 import Spinner from '../components/Spinner';
 import Toast from '../components/Toast';
 
-const STATUS_FILTERS = ['', 'SEND', 'PENDING', 'DELIVERED', 'FAILED'];
+const STATUS_FILTERS = ['', 'PENDING', 'SENT', 'FAILED'];
 
 export default function Notifications() {
   const [notifications, setNotifications] = useState([]);

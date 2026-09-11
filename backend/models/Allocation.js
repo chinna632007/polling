@@ -1,52 +1,44 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 
-const ALLOCATION_STATUSES = ['Allocated', 'Pending Approval', 'Unallocated', 'Cancelled'];
+const ALLOCATION_STATUSES = ['ALLOCATED', 'CANCELLED', 'REALLOCATED'];
+const ACTIVE_ALLOCATION_STATUSES = ['ALLOCATED'];
 
-/**
- * Links one officer to one booth.
- * Enforcement rules:
- *  - One officer can only ever have ONE active (not cancelled) allocation.
- *  - Statuses: Allocated | Pending Approval | Unallocated | Cancelled
- */
 const allocationSchema = new mongoose.Schema(
   {
-    allocationId: {
-      type: String,
-      required: true,
-      unique: true, // deterministic: ALLOC-YYYYMMDD-<officerId>
-      trim: true,
-    },
+    allocationId: { type: String, required: true, unique: true, trim: true },
     officer: { type: mongoose.Schema.Types.ObjectId, ref: 'Officer', required: true },
-    booth: { type: mongoose.Schema.Types.ObjectId, ref: 'Booth' }, // null when Unallocated
-    mandal: { type: String, trim: true },
-    status: {
-      type: String,
-      enum: ALLOCATION_STATUSES,
-      default: 'Pending Approval',
-    },
+    officerId: { type: String, trim: true, default: '' },
+    booth: { type: mongoose.Schema.Types.ObjectId, ref: 'Booth' },
+    boothId: { type: String, trim: true, default: '' },
+    mandal: { type: String, trim: true, default: '' },
+    status: { type: String, enum: ALLOCATION_STATUSES, default: 'ALLOCATED' },
+    allocationReason: { type: String, trim: true, default: '' },
     allocationDate: { type: Date, default: Date.now },
-    // 0-100 score from addressMatchingService; 0 = no conflict found (safe)
     addressMatchScore: { type: Number, default: 0, min: 0, max: 100 },
-    // Set when the address comparison produced related tokens (used for audit/UI highlight)
+    addressValidationReason: { type: String, default: '' },
     rejectedReasons: { type: [String], default: [] },
-    adminApproved: { type: Boolean, default: false },
+    adminApproved: { type: Boolean, default: true },
+    allocatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
     approvedAt: { type: Date },
+    allocatedAt: { type: Date },
     cancelledAt: { type: Date },
+    reallocatedAt: { type: Date },
+    previousAllocationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Allocation', default: null },
   },
   { timestamps: true }
 );
 
-// Each officer may hold only ONE active allocation (rules: one officer = one allocation).
-// MongoDB enforces this at the database level as well.
+// DB-level protection: an officer may hold at most ONE active (ALLOCATED)
+// allocation at any time. CANCELLED / REALLOCATED records do not count.
 allocationSchema.index(
   { officer: 1 },
-  {
-    unique: true,
-    partialFilterExpression: { status: { $ne: 'Cancelled' } },
-  }
+  { unique: true, partialFilterExpression: { status: { $nin: ['CANCELLED', 'REALLOCATED'] } } }
 );
 allocationSchema.index({ status: 1 });
 allocationSchema.index({ mandal: 1 });
+allocationSchema.index({ booth: 1 });
 
-module.exports =
-  mongoose.models.Allocation || mongoose.model('Allocation', allocationSchema);
+allocationSchema.statics.ACTIVE_ALLOCATION_STATUSES = ACTIVE_ALLOCATION_STATUSES;
+allocationSchema.statics.ALLOCATION_STATUSES = ALLOCATION_STATUSES;
+
+module.exports = mongoose.models.Allocation || mongoose.model('Allocation', allocationSchema);

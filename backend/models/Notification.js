@@ -1,6 +1,6 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 
-const NOTIFICATION_STATUSES = ['SEND', 'PENDING', 'FAILED', 'DELIVERED'];
+const NOTIFICATION_STATUSES = ['PENDING', 'SENT', 'FAILED'];
 
 /**
  * Persists every SMS that the system attempts to send, together with its

@@ -1,18 +1,19 @@
-/**
+﻿/**
  * addressMatchingService.js
  * ==========================
  * Reusable, pure address comparison engine used by the allocation
  * algorithm to decide whether an officer's residential address is
- * "related to" a polling booth's address.
+ * related to a polling booth's address.
  *
- * Rules implemented here (from the project specification):
- *   1. Officer and booth MUST belong to the same Mandal.
- *   2. If officer locality matches booth locality -> reject.
- *   3. If overall address similarity is high -> reject.
- *   4. Normalize address text (lowercase, trim, strip punctuation).
- *   5. Compare important address tokens.
- *   6. If multiple important tokens match -> reject.
- *   7. PIN code alone NEVER rejects (multiple booths share a PIN).
+ * Rules (from the project specification - simple and clear):
+ *   PRIMARY  : officer and booth MUST belong to the same Mandal.
+ *              When both localities are known:
+ *                - different locality = SUITABLE
+ *                - same locality      = REJECT
+ *   SECONDARY: only when locality info is missing, compare Ward and
+ *              Street (reject on exact ward+street match or 2+ shared
+ *              address tokens). Street similarity NEVER overrides a
+ *              clearly different locality.
  *
  * The module is intentionally dependency-free so it can be unit tested
  * and reused by any other part of the system.
@@ -29,24 +30,7 @@ const STOPWORDS = new Set([
   'post', 'po', 'via', 'c/o', 'careof', 'nearby', 'besides', 'next', 'of',
 ]);
 
-// Weights used to build a 0-100 conflict confidence score.
-// Higher score = higher address conflict = less suitable.
-const FIELD_WEIGHTS = {
-  locality: 60, // exact locality match is the strongest signal
-  localityStrong: 50, // strong similarity (token overlap / fuzzy similarity)
-  wardExact: 12,
-  wardStrong: 6,
-  streetExact: 12,
-  streetStrong: 6,
-  districtExact: 5,
-  pinExact: 5,
-};
-
-// Similarity ratio above which two strings are treated as "strong match".
 const STRONG_SIMILARITY = 0.75;
-
-// Conflict score at/above which the allocation is rejected.
-const REJECT_SCORE = 50;
 
 const IMPORTANT_FIELDS = ['locality', 'street', 'ward'];
 
@@ -54,13 +38,6 @@ const IMPORTANT_FIELDS = ['locality', 'street', 'ward'];
 // Normalization helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Normalizes a single piece of address text:
- *  - Unicode normalize
- *  - lowercase
- *  - strip punctuation (. , # / & ( ) ' " -)
- *  - collapse whitespace
- */
 function normalizeAddress(text) {
   if (text === null || text === undefined) return '';
   return String(text)
@@ -71,10 +48,6 @@ function normalizeAddress(text) {
     .trim();
 }
 
-/**
- * Splits normalized text into meaningful tokens, ignoring stopwords and
- * tokens that are too short to carry meaning.
- */
 function tokenizeAddress(text) {
   const normalized = normalizeAddress(text);
   if (!normalized) return [];
@@ -83,205 +56,186 @@ function tokenizeAddress(text) {
     .map((t) => t.trim())
     .filter((t) => t.length >= 2 && !STOPWORDS.has(t));
 }
-/**
- * Levenshtein edit-distance (iterative, O(n*m)) used for fuzzy matching of
- * locality names that may be spelled slightly differently in the two files.
- */
+
 function levenshtein(a, b) {
   if (a === b) return 0;
   const m = a.length;
   const n = b.length;
   if (m === 0) return n;
   if (n === 0) return m;
-
   let prev = new Array(n + 1);
   let curr = new Array(n + 1);
   for (let j = 0; j <= n; j += 1) prev[j] = j;
-
   for (let i = 1; i <= m; i += 1) {
     curr[0] = i;
     for (let j = 1; j <= n; j += 1) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
       curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
     }
-    [prev, curr] = [curr, prev];
+    const tmp = prev;
+    prev = curr;
+    curr = tmp;
   }
   return prev[n];
 }
 
-/**
- * Similarity ratio in [0,1]. 1 = identical, 0 = completely different.
- */
 function similarityRatio(a, b) {
-  const sa = normalizeAddress(a);
-  const sb = normalizeAddress(b);
-  if (!sa && !sb) return 0;
-  if (!sa || !sb) return 0;
-  if (sa === sb) return 1;
-  const dist = levenshtein(sa, sb);
-  return 1 - dist / Math.max(sa.length, sb.length);
+  const na = normalizeAddress(a);
+  const nb = normalizeAddress(b);
+  if (!na && !nb) return 1;
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
+  const distance = levenshtein(na, nb);
+  return 1 - distance / Math.max(na.length, nb.length);
 }
 
-/**
- * Computes the exact/strong/token-match status between two address fields.
- */
 function compareFields(a, b) {
   const na = normalizeAddress(a);
   const nb = normalizeAddress(b);
-  if (!na || !nb) return { exact: false, strong: false, sharedTokens: [] };
-
-  const exact = na === nb;
-  const tokensA = tokenizeAddress(na);
-  const tokensB = tokenizeAddress(nb);
-  const sharedTokens = tokensA.filter((t) => tokensB.includes(t));
-  const strong = exact || similarityRatio(na, nb) >= STRONG_SIMILARITY || sharedTokens.length > 0;
-
+  const exact = Boolean(na && nb && na === nb);
+  const strong = Boolean(na && nb && !exact && similarityRatio(na, nb) >= STRONG_SIMILARITY);
+  const tokensA = tokenizeAddress(a);
+  const tokensB = tokenizeAddress(b);
+  const set = new Set(tokensA);
+  const sharedTokens = tokensB.filter((t) => set.has(t));
   return { exact, strong, sharedTokens };
 }
 
-/**
- * Mandal comparison is used as a hard gate: an officer may only be allocated
- * to a booth inside their own Mandal. A fuzzy match tolerates minor spelling
- * variations between the officer file and the booth file.
- */
 function compareMandal(officerMandal, boothMandal) {
   const a = normalizeAddress(officerMandal);
   const b = normalizeAddress(boothMandal);
-  if (!a || !b) return { matched: true, confidence: 0 }; // cannot disprove
-  if (a === b) return { matched: true, confidence: 1 };
-  const sim = similarityRatio(a, b);
-  return { matched: sim >= STRONG_SIMILARITY, confidence: sim };
+  const matched = Boolean(a && b && a === b);
+  return {
+    matched,
+    officerMandal: officerMandal || '',
+    boothMandal: boothMandal || '',
+  };
 }
 
-/**
- * Normalized, human friendly Mandal key used to group officers and booths.
- */
+/** Canonical key used to group officers/booths by Mandal name. */
 function mandalKey(mandal) {
-  return normalizeAddress(mandal) || 'unknown';
+  return normalizeAddress(mandal);
 }
+
 // ---------------------------------------------------------------------------
-// Main entry point
+// Core decision
 // ---------------------------------------------------------------------------
 
 /**
- * Decides whether an officer address is "related to" a booth address.
- *
- * @param {object} officer - { locality, ward, street, mandal, district, pinCode }
- * @param {object} booth   - { locality, ward, street, mandal, district, pinCode }
+ * PRIMARY + SECONDARY address rule (requirement E).
  * @returns {{
  *   related: boolean,
- *   score: number,          // 0-100 conflict confidence
+ *   score: number,
  *   mandalMatched: boolean,
- *   matchedTokens: string[],// important shared locality/street/ward tokens
- *   reasons: string[]       // human readable reasons for the decision
+ *   localityMatched: boolean,
+ *   matchedTokens: string[],
+ *   reasons: string[],
  * }}
  */
 function isRelated(officer, booth) {
-  const reasons = [];
+  const officerData = officer || {};
+  const boothData = booth || {};
 
-  // --- Hard gate: same Mandal is mandatory (rule 1) -------------------------
-  const mandalCheck = compareMandal(officer.mandal, booth.mandal);
+  // PRIMARY GATE: same Mandal required.
+  const mandalCheck = compareMandal(officerData.mandal, boothData.mandal);
   if (!mandalCheck.matched) {
     return {
       related: true,
       score: 100,
       mandalMatched: false,
+      localityMatched: false,
       matchedTokens: [],
-      reasons: ['Different Mandal - not eligible for this booth'],
+      reasons: ['Officer and booth belong to different Mandals - not eligible.'],
     };
   }
 
-  // --- Compare every important field -----------------------------------------
-  const fieldResults = {};
-  const matchedTokens = new Set();
+  const officerLocality = normalizeAddress(officerData.locality);
+  const boothLocality = normalizeAddress(boothData.locality);
 
-  IMPORTANT_FIELDS.forEach((field) => {
-    const res = compareFields(officer[field], booth[field]);
-    fieldResults[field] = res;
-    res.sharedTokens.forEach((t) => matchedTokens.add(t));
-  });
-
-  const districtRes = compareFields(officer.district, booth.district);
-  const pinRes = compareFields(officer.pinCode, booth.pinCode);
-
-  const localityExact = fieldResults.locality.exact;
-  const localityStrong = fieldResults.locality.strong;
-  const wardExact = fieldResults.ward.exact;
-  const wardStrong = fieldResults.ward.strong;
-  const streetExact = fieldResults.street.exact;
-  const streetStrong = fieldResults.street.strong;
-
-  const strongImportantCount = IMPORTANT_FIELDS.filter((f) => fieldResults[f].strong).length;
-
-  // --- Rule 2: locality match (exact) always rejects ------------------------
-  if (localityExact) {
-    reasons.push(`Locality matches exactly: ${officer.locality}`);
-  } else if (localityStrong) {
-    reasons.push('Locality is highly similar to the booth locality');
+  if (officerLocality && boothLocality) {
+    if (officerLocality === boothLocality) {
+      return {
+        related: true,
+        score: 60,
+        mandalMatched: true,
+        localityMatched: true,
+        matchedTokens: [],
+        reasons: ['Officer residential locality matches booth locality.'],
+      };
+    }
+    // Different locality within the same Mandal -> SUITABLE.
+    return {
+      related: false,
+      score: 0,
+      mandalMatched: true,
+      localityMatched: false,
+      matchedTokens: [],
+      reasons: ['Different locality within the same Mandal.'],
+    };
   }
 
-  // --- Rule 6: multiple important token matches reject ----------------------
-  if (matchedTokens.size >= 2) {
-    reasons.push(`Multiple address tokens match (${[...matchedTokens].join(', ')})`);
+  // SECONDARY RULE: locality missing on either side -> ward + street comparison.
+  const wardRes = compareFields(officerData.ward, boothData.ward);
+  const streetRes = compareFields(officerData.street, boothData.street);
+  const matchedTokens = [...new Set([...wardRes.sharedTokens, ...streetRes.sharedTokens])];
+
+  if (wardRes.exact && streetRes.exact) {
+    return {
+      related: true,
+      score: 24,
+      mandalMatched: true,
+      localityMatched: false,
+      matchedTokens,
+      reasons: ['Locality is not specified and ward + street both match exactly.'],
+    };
   }
-
-  // --- Rule 3: high overall similarity between street/ward rejects ----------
-  if (wardExact && streetExact) {
-    reasons.push('Ward and street both match exactly');
+  if (matchedTokens.length >= 2) {
+    return {
+      related: true,
+      score: 24,
+      mandalMatched: true,
+      localityMatched: false,
+      matchedTokens,
+      reasons: [`Locality is not specified and multiple address tokens match (${matchedTokens.join(', ')}).`],
+    };
   }
-  if (strongImportantCount >= 2 && !localityExact) {
-    reasons.push(`High address similarity across ${strongImportantCount} fields`);
-  }
-
-  // --- Compute conflict confidence score --------------------------------------
-  let score = 0;
-  if (localityExact) score += FIELD_WEIGHTS.locality;
-  else if (localityStrong) score += FIELD_WEIGHTS.localityStrong;
-  if (wardExact) score += FIELD_WEIGHTS.wardExact;
-  else if (wardStrong) score += FIELD_WEIGHTS.wardStrong;
-  if (streetExact) score += FIELD_WEIGHTS.streetExact;
-  else if (streetStrong) score += FIELD_WEIGHTS.streetStrong;
-  if (districtRes.exact) score += FIELD_WEIGHTS.districtExact; // minor signal only
-  if (pinRes.exact) score += FIELD_WEIGHTS.pinExact; // NEVER decisive alone (rule 7)
-  score = Math.min(100, Math.max(0, score));
-
-  // --- Decision -----------------------------------------------------------------
-  const related = score >= REJECT_SCORE || !mandalCheck.matched;
-
-  if (!related) {
-    reasons.length = 0;
-    reasons.push('No significant address conflict detected');
-  }
-
   return {
-    related,
-    score,
+    related: false,
+    score: 0,
     mandalMatched: true,
-    matchedTokens: [...matchedTokens],
-    reasons,
+    localityMatched: false,
+    matchedTokens: [],
+    reasons: ['No significant address conflict detected.'],
   };
 }
 
 /**
- * Convenience wrapper used by the allocation service: returns true when the
- * booth must NOT receive this officer.
+ * Human readable outcome used by the UI / modal:
+ * NOT SUITABLE -> a clear rejection reason.
+ * SUITABLE     -> "Different locality within the same Mandal."
  */
+function compatibilityReason(officer, booth) {
+  const check = isRelated(officer, booth);
+  if (!check.related) return 'Different locality within the same Mandal.';
+  if (check.reasons && check.reasons.length > 0) return check.reasons[0];
+  return 'Address conflict detected between officer residence and booth location.';
+}
+
+/** Convenience wrapper used by the allocation service. */
 function isAllocationBlocked(officer, booth) {
   return isRelated(officer, booth).related;
 }
 
-/**
- * Builds a one-line readable booth address used in SMS / reports.
- */
 function boothAddressLine(booth) {
+  const b = booth || {};
   return [
-    booth.buildingName,
-    booth.street,
-    booth.locality,
-    booth.ward ? `Ward ${booth.ward}` : '',
-    booth.mandal,
-    booth.district,
-    booth.pinCode ? `PIN ${booth.pinCode}` : '',
+    b.buildingName,
+    b.street,
+    b.locality,
+    b.ward ? `Ward ${b.ward}` : '',
+    b.mandal,
+    b.district,
+    b.pinCode ? `PIN ${b.pinCode}` : '',
   ]
     .filter((part) => part && String(part).trim())
     .join(', ');
@@ -289,9 +243,8 @@ function boothAddressLine(booth) {
 
 module.exports = {
   STOPWORDS,
-  FIELD_WEIGHTS,
   STRONG_SIMILARITY,
-  REJECT_SCORE,
+  IMPORTANT_FIELDS,
   normalizeAddress,
   tokenizeAddress,
   levenshtein,
@@ -300,6 +253,7 @@ module.exports = {
   compareMandal,
   mandalKey,
   isRelated,
+  compatibilityReason,
   isAllocationBlocked,
   boothAddressLine,
 };

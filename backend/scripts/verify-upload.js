@@ -1,4 +1,4 @@
-/**
+﻿/**
  * verify-upload.js
  * ================
  * End-to-end check of the Excel upload pipeline over real HTTP:
@@ -50,7 +50,7 @@ async function main() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       username: process.env.ADMIN_USERNAME || 'admin',
-      password: process.env.ADMIN_PASSWORD || 'Admin@12345',
+      password: process.env.ADMIN_PASSWORD || 'admin123',
     }),
   });
   const login = await loginRes.json();

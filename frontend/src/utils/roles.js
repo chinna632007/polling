@@ -1,62 +1,41 @@
 /**
  * roles.js
  * ========
- * Frontend role constants + helpers. Mirrors backend/services/roleService.js.
- * The SERVER is always the source of truth for access control - these helpers
- * only drive the UI (menus, redirects, hiding buttons) and never replace the
- * backend checks.
+ * Single-login system: the ONLY role is the Main Admin (SUPER_ADMIN).
+ * Kept helpers so existing imports keep working.
  */
 
 export const ROLES = {
   SUPER_ADMIN: 'SUPER_ADMIN',
-  ALLOCATION_OFFICER: 'ALLOCATION_OFFICER',
-  MANDAL_OFFICER: 'MANDAL_OFFICER',
-  BOOTH_OFFICER: 'BOOTH_OFFICER',
 };
 
 export const ROLE_LABELS = {
-  [ROLES.SUPER_ADMIN]: 'Super Admin',
-  [ROLES.ALLOCATION_OFFICER]: 'Allocation Officer',
-  [ROLES.MANDAL_OFFICER]: 'Mandal Officer',
-  [ROLES.BOOTH_OFFICER]: 'Booth Officer',
+  [ROLES.SUPER_ADMIN]: 'Main Admin',
 };
 
-/** Default landing page for each role (used right after login). */
 export const ROLE_HOME = {
-  [ROLES.SUPER_ADMIN]: '/admin/dashboard',
-  [ROLES.ALLOCATION_OFFICER]: '/allocation/dashboard',
-  [ROLES.MANDAL_OFFICER]: '/mandal/dashboard',
-  [ROLES.BOOTH_OFFICER]: '/officer/dashboard',
+  [ROLES.SUPER_ADMIN]: '/dashboard',
 };
 
 export function roleLabel(role) {
-  return ROLE_LABELS[role] || role || '—';
+  return ROLE_LABELS[role] || 'Main Admin';
 }
 
-export function homeForRole(role) {
-  // SECURITY/UX: this must NEVER return "/" — the "/" route renders a redirect
-  // to the role home, so returning "/" from here would create an infinite
-  // redirect loop and show a blank white page. Unknown/missing roles fall back
-  // to the Super Admin home (backend sanitizeUser does the same default).
-  return ROLE_HOME[role] || ROLE_HOME[ROLES.SUPER_ADMIN];
+export function homeForRole() {
+  return '/dashboard';
 }
 
-/** True for roles that may edit master data + run/manage allocations. */
-export function canManageData(user) {
-  return Boolean(
-    user && (user.role === ROLES.SUPER_ADMIN || user.role === ROLES.ALLOCATION_OFFICER)
-  );
+/** The Main Admin may do everything. */
+export function canManageData() {
+  return true;
 }
 
-/** True only for the Super Admin (uploads, deletes, user management). */
-export function isSuperAdmin(user) {
-  return Boolean(user && user.role === ROLES.SUPER_ADMIN);
+/** True for the Main Admin. */
+export function isSuperAdmin() {
+  return true;
 }
 
-/** Role bits for view-only access (Mandal/Booth officers). */
-export function isViewOnly(user) {
-  return Boolean(
-    user &&
-      (user.role === ROLES.MANDAL_OFFICER || user.role === ROLES.BOOTH_OFFICER)
-  );
+/** No view-only roles remain. */
+export function isViewOnly() {
+  return false;
 }

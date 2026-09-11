@@ -479,10 +479,10 @@ async function boothReport(filter = {}) {
   return toXlsxBuffer(rows, 'Booths');
 }
 
-/** Allocated Officers report -> every non-cancelled allocation with a booth. */
+/** Allocated Officers report -> every ALLOCATED allocation with a booth. */
 async function allocationReport(filter = {}) {
   const allocations = await getAllocationRowsForReport({
-    status: { $ne: 'Cancelled' },
+    status: 'ALLOCATED',
     booth: { $ne: null },
     ...filter,
   });
@@ -500,32 +500,34 @@ async function allocationReport(filter = {}) {
     'Booth Ward': a.booth?.ward || '',
     Mandal: a.mandal || '',
     'Allocation Status': a.status,
-    'Approval Status': a.adminApproved ? 'Approved' : 'Pending Approval',
     'Address Match Score': a.addressMatchScore,
     'Allocation Date': a.allocationDate ? new Date(a.allocationDate).toISOString() : '',
   }));
   return toXlsxBuffer(rows, 'Allocations');
 }
 
-/** Unallocated Officers report (filter = role-scoped query). */
+/** Unallocated Officers report: officers with no active ALLOCATED allocation. */
 async function unallocatedOfficersReport(filter = {}) {
-  const records = await Allocation.find({ status: 'Unallocated', ...filter })
-    .populate('officer')
-    .lean();
-  const rows = records.map((a) => ({
-    'Allocation ID': a.allocationId,
-    'Officer ID': a.officer?.officerId || '',
-    'Officer Name': a.officer?.officerName || '',
-    Designation: a.officer?.designation || '',
-    'Mobile Number': a.officer?.mobileNumber || '',
-    'Officer Locality': a.officer?.locality || '',
-    'Officer Ward': a.officer?.ward || '',
-    Mandal: a.officer?.mandal || '',
-    District: a.officer?.district || '',
-    'PIN Code': a.officer?.pinCode || '',
-    Status: 'Unallocated',
-    Reason: (a.rejectedReasons || []).join('; '),
-  }));
+  const Officer = require('../models/Officer');
+  const Allocation = require('../models/Allocation');
+  const allocated = await Allocation.find({ status: 'ALLOCATED' }).select('officer').lean();
+  const allocatedIds = new Set(allocated.map((a) => String(a.officer)));
+  const officers = await Officer.find(filter).sort({ officerId: 1 }).lean();
+  const rows = officers
+    .filter((o) => !allocatedIds.has(String(o._id)))
+    .map((o) => ({
+      'Officer ID': o.officerId || '',
+      'Officer Name': o.officerName || '',
+      Designation: o.designation || '',
+      'Mobile Number': o.mobileNumber || '',
+      'Officer Locality': o.locality || '',
+      'Officer Ward': o.ward || '',
+      Mandal: o.mandal || '',
+      District: o.district || '',
+      'PIN Code': o.pinCode || '',
+      Status: 'UNALLOCATED',
+      Reason: 'No active ALLOCATED allocation',
+    }));
   return toXlsxBuffer(rows, 'Unallocated Officers');
 }
 

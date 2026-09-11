@@ -1,6 +1,14 @@
-/* ==========================================================================
+﻿/* ==========================================================================
    Smart Polling Booth Officer Allocation System - Global Stylesheet
-   Clean, professional government-administration dashboard design system.
+   Professional admin-dashboard design system.
+
+   LAYOUT ARCHITECTURE (desktop):
+   +----------------------+------------------------------------------+
+   |                      |              TOP HEADER (navbar)         |
+   |   SIDEBAR            +------------------------------------------+
+   |   250px, sticky,     |              MAIN CONTENT (flex: 1)      |
+   |   NEVER overlaps     |              (.app-main)                 |
+   +----------------------+------------------------------------------+
    ========================================================================== */
 
 :root {
@@ -28,6 +36,7 @@
   --text-muted: #64748b;
 
   --sidebar-w: 250px;
+  --header-h: 60px;
   --radius: 10px;
   --shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
   --shadow-lg: 0 10px 25px rgba(15, 23, 42, 0.15);
@@ -44,6 +53,7 @@ body {
   color: var(--text);
   font-size: 14px;
   line-height: 1.5;
+  overflow-x: hidden; /* never allow horizontal scrolling */
 }
 
 h1, h2, h3, h4, p { margin: 0; }
@@ -53,18 +63,32 @@ a { color: var(--primary); text-decoration: none; }
 .mono { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 12.5px; }
 .muted { color: var(--text-muted); font-size: 12.5px; }
 
-/* ---------------------------------- Layout --------------------------------- */
+/* ==========================================================================
+   APP SHELL LAYOUT
+   One flex row: SIDEBAR (fixed width) + APP-RIGHT (flex: 1).
+   ========================================================================== */
 
-.app-shell { display: flex; min-height: 100vh; }
+.app-layout {
+  display: flex;
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* Right side of the shell: header + main + footer stacked vertically. */
+.app-right {
+  flex: 1;
+  min-width: 0;              /* allows the main content to shrink */
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
 
 .app-main {
   flex: 1;
-  display: flex;
-  flex-direction: column;
   min-width: 0;
+  width: 100%;
+  padding: 24px;
 }
-
-.app-content { flex: 1; padding: 24px; }
 
 .app-footer {
   padding: 14px 24px;
@@ -75,10 +99,13 @@ a { color: var(--primary); text-decoration: none; }
   text-align: center;
 }
 
-/* --------------------------------- Sidebar --------------------------------- */
+/* ==========================================================================
+   SIDEBAR - always the LEFT column, sticky, full height, never overlapping.
+   ========================================================================== */
 
 .sidebar {
   width: var(--sidebar-w);
+  flex-shrink: 0;            /* never squeezed or centered */
   background: linear-gradient(180deg, var(--navy) 0%, var(--navy-dark) 100%);
   color: #e2e8f0;
   display: flex;
@@ -86,7 +113,7 @@ a { color: var(--primary); text-decoration: none; }
   position: sticky;
   top: 0;
   height: 100vh;
-  flex-shrink: 0;
+  z-index: 50;
 }
 
 .sidebar-head {
@@ -98,13 +125,19 @@ a { color: var(--primary); text-decoration: none; }
 }
 
 .sidebar-logo { font-size: 26px; }
-
 .sidebar-title { font-size: 15px; color: #fff; }
 .sidebar-sub { font-size: 11.5px; color: #cbd5e1; }
 
 .sidebar-close { display: none; }
 
-.sidebar-nav { padding: 12px 10px; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.sidebar-nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 10px;
+  overflow-y: auto;
+}
 
 .sidebar-link {
   display: flex;
@@ -133,29 +166,38 @@ a { color: var(--primary); text-decoration: none; }
 
 .sidebar-overlay { display: none; }
 
-/* ---------------------------------- Navbar --------------------------------- */
+/* ==========================================================================
+   TOP HEADER (Navbar) - always the FIRST row of the right side.
+   ========================================================================== */
 
 .navbar {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 0 24px;
-  min-height: 60px;
+  min-height: var(--header-h);
   background: var(--card);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
-  z-index: 20;
+  z-index: 40;
 }
 
-.navbar-burger { display: none; background: none; border: 0; font-size: 22px; cursor: pointer; color: var(--text); padding: 4px 8px; }
+.navbar-burger {
+  display: none;
+  background: none;
+  border: 0;
+  font-size: 22px;
+  cursor: pointer;
+  color: var(--text);
+  padding: 4px 8px;
+}
 
-.navbar-brand { display: flex; flex-direction: column; }
-.navbar-title { font-weight: 700; color: var(--navy); font-size: 15px; }
+.navbar-brand { display: flex; flex-direction: column; min-width: 0; }
+.navbar-title { font-weight: 700; color: var(--navy); font-size: 15px; white-space: nowrap; }
 .navbar-subtitle { font-size: 12px; color: var(--text-muted); }
 
 .navbar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
-
 .navbar-admin { display: flex; align-items: center; gap: 10px; }
 .navbar-admin-avatar {
   width: 34px; height: 34px; border-radius: 50%;
@@ -166,11 +208,27 @@ a { color: var(--primary); text-decoration: none; }
 .navbar-admin-info { display: flex; flex-direction: column; }
 .navbar-admin-name { font-weight: 600; font-size: 13.5px; }
 .navbar-admin-role { font-size: 11.5px; color: var(--text-muted); }
-/* ------------------------------- Pages / cards ------------------------------ */
 
-.page { max-width: 1280px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+/* ==========================================================================
+   PAGES / CARDS
+   .page uses the FULL available width of the main content (no centering cap).
+   ========================================================================== */
 
-.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+  min-width: 0;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
 .page-title { font-size: 22px; color: var(--navy); font-weight: 700; }
 .page-subtitle { color: var(--text-muted); font-size: 13.5px; margin-top: 2px; }
 .page-actions { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -184,14 +242,29 @@ a { color: var(--primary); text-decoration: none; }
 }
 .card-title { font-size: 16px; color: var(--navy); font-weight: 700; margin-bottom: 12px; }
 
-.empty-state { padding: 26px 12px; text-align: center; color: var(--text-muted); background: var(--card); border: 1px dashed var(--border); border-radius: var(--radius); }
+.empty-state {
+  padding: 26px 12px;
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--card);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
 
-/* ------------------------------- Stat cards -------------------------------- */
+/* Legacy page wrapper (kept for older components). */
+.page-wrap {
+  width: 100%;
+  padding: 0;
+}
+
+/* ==========================================================================
+   STAT CARDS - CSS grid, auto-resize to available width.
+   ========================================================================== */
 
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 20px;
 }
 
 .stat-card {
@@ -215,7 +288,9 @@ a { color: var(--primary); text-decoration: none; }
 .stat-label { margin-top: 4px; font-size: 13px; color: var(--text-muted); font-weight: 600; }
 .stat-sub { font-size: 12px; color: var(--text-muted); }
 
-/* --------------------------------- Buttons --------------------------------- */
+/* ==========================================================================
+   BUTTONS
+   ========================================================================== */
 
 .btn {
   display: inline-flex;
@@ -225,10 +300,11 @@ a { color: var(--primary); text-decoration: none; }
   padding: 9px 16px;
   border-radius: 8px;
   border: 1px solid transparent;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
+  font-family: inherit;
   cursor: pointer;
-  transition: background 0.15s, transform 0.05s;
+  transition: background 0.15s, border-color 0.15s;
   white-space: nowrap;
 }
 .btn:active { transform: scale(0.98); }
@@ -238,18 +314,24 @@ a { color: var(--primary); text-decoration: none; }
 .btn-primary:hover { background: #1e40af; }
 .btn-secondary { background: var(--navy); color: #fff; }
 .btn-secondary:hover { background: var(--navy-dark); }
-.btn-success { background: var(--green); color: #fff; }
+.btn-success { background: var(--green); color: #fff; border-color: var(--green); }
 .btn-success:hover { background: #14532d; }
-.btn-danger { background: var(--red); color: #fff; }
+.btn-warning { background: var(--amber); color: #fff; border-color: var(--amber); }
+.btn-warning:hover { background: #78350f; }
+.btn-danger { background: var(--red); color: #fff; border-color: var(--red); }
 .btn-danger:hover { background: #991b1b; }
 .btn-ghost { background: #fff; border-color: var(--border); color: var(--text); }
 .btn-ghost:hover { background: var(--bg); }
 
 .btn-block { width: 100%; }
-.btn-sm { padding: 6px 10px; font-size: 12.5px; }
-.btn-xs { padding: 4px 8px; font-size: 11.5px; border-radius: 6px; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn-xs { padding: 3px 8px; font-size: 11px; border-radius: 6px; }
 
-/* ---------------------------------- Forms ---------------------------------- */
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ==========================================================================
+   FORMS
+   ========================================================================== */
 
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .toolbar .input { min-width: 200px; flex: 1; }
@@ -268,6 +350,7 @@ a { color: var(--primary); text-decoration: none; }
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 14px;
+  font-family: inherit;
   background: #fff;
   color: var(--text);
   outline: none;
@@ -275,9 +358,41 @@ a { color: var(--primary); text-decoration: none; }
 }
 .input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.15); }
 
-.form-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+.field-error { color: var(--red); font-size: 12.5px; font-weight: 600; margin-top: 4px; }
+.hint-text { font-size: 12.5px; color: var(--text-muted); line-height: 1.5; }
 
-/* ------------------------------- Modals / Confirm --------------------------- */
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+.form-grid .form-actions { grid-column: 1 / -1; }
+
+/* Password eye toggle */
+.input-eye-wrap { position: relative; }
+.input-eye-wrap .input { width: 100%; padding-right: 42px; }
+.eye-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.eye-btn:hover { color: var(--navy); background: var(--bg); }
+.eye-btn svg { width: 18px; height: 18px; }
+
+/* ==========================================================================
+   MODALS
+   ========================================================================== */
 
 .modal-overlay {
   position: fixed;
@@ -295,16 +410,35 @@ a { color: var(--primary); text-decoration: none; }
   border-radius: 12px;
   padding: 20px;
   width: 100%;
-  max-width: 420px;
+  max-width: 440px;
   box-shadow: var(--shadow-lg);
   animation: modal-pop 0.18s ease-out;
 }
-.modal-wide { max-width: 780px; }
+.modal-wide { max-width: 820px; }
 @keyframes modal-pop { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 .modal-title { font-size: 17px; color: var(--navy); margin-bottom: 8px; }
+.modal-sub { font-size: 14px; color: var(--navy-dark); margin: 14px 0 8px; }
 .modal-message { color: var(--text-muted); font-size: 13.5px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
-/* --------------------------------- Tables --------------------------------- */
+
+/* Reallocation modal */
+.realloc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.realloc-box {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.realloc-box h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); margin-bottom: 6px; }
+
+/* ==========================================================================
+   TABLES
+   ========================================================================== */
 
 .table-wrap {
   overflow-x: auto;
@@ -314,23 +448,31 @@ a { color: var(--primary); text-decoration: none; }
   box-shadow: var(--shadow);
 }
 
-.table { width: 100%; border-collapse: collapse; min-width: 760px; }
-.table-sm { min-width: 560px; }
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table-allocations { min-width: 980px; }
+
+.table th,
+.table td {
+  padding: 9px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
 
 .table th {
-  text-align: left;
-  padding: 10px 12px;
-  background: var(--navy);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
+  background: var(--grey-bg);
+  color: var(--navy-dark);
+  font-size: 11.5px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.04em;
   white-space: nowrap;
 }
-.table td { padding: 10px 12px; border-top: 1px solid var(--border); vertical-align: middle; font-size: 13.5px; }
+
 .table tbody tr:hover { background: #f8fafc; }
-.table .col-actions { min-width: 170px; }
+.table-sm td, .table-sm th { padding: 7px 10px; font-size: 12.5px; }
+
+.col-actions { text-align: right; white-space: nowrap; width: 1%; }
 
 .row-actions { display: flex; gap: 6px; }
 .row-actions-wrap { flex-wrap: wrap; }
@@ -339,7 +481,9 @@ a { color: var(--primary); text-decoration: none; }
 
 .inline-note { font-size: 11px; color: var(--red); margin-top: 2px; font-weight: 600; }
 
-/* ---------------------------------- Badges --------------------------------- */
+/* ==========================================================================
+   BADGES
+   ========================================================================== */
 
 .badge {
   display: inline-flex;
@@ -358,7 +502,9 @@ a { color: var(--primary); text-decoration: none; }
 .badge-navy { background: var(--navy); color: #fff; }
 .badge-grey { background: var(--grey-bg); color: var(--grey); }
 
-/* ---------------------------------- Toast ---------------------------------- */
+/* ==========================================================================
+   TOAST
+   ========================================================================== */
 
 .toast {
   position: fixed;
@@ -383,7 +529,9 @@ a { color: var(--primary); text-decoration: none; }
 .toast-message { font-size: 13.5px; }
 .toast-close { margin-left: auto; background: none; border: 0; font-size: 18px; cursor: pointer; color: var(--text-muted); }
 
-/* --------------------------------- Alerts ---------------------------------- */
+/* ==========================================================================
+   ALERTS
+   ========================================================================== */
 
 .alert {
   display: flex;
@@ -398,10 +546,13 @@ a { color: var(--primary); text-decoration: none; }
 .alert-success { background: var(--green-bg); border-color: #86efac; color: var(--green); }
 .alert-info { background: var(--blue-bg); border-color: #93c5fd; color: var(--blue); }
 
-/* --------------------------------- Spinner --------------------------------- */
+/* ==========================================================================
+   SPINNER
+   ========================================================================== */
 
 .spinner-wrap { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 24px; color: var(--text-muted); }
 .spinner-wrap-sm { padding: 8px; }
+.spinner-label { font-size: 13px; }
 .spinner {
   width: 22px; height: 22px;
   border: 3px solid var(--border);
@@ -412,39 +563,85 @@ a { color: var(--primary); text-decoration: none; }
 .spinner-wrap-sm .spinner { width: 16px; height: 16px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* --------------------------------- Pagination ------------------------------ */
+/* ==========================================================================
+   PAGINATION
+   ========================================================================== */
 
 .pagination { display: flex; align-items: center; justify-content: center; gap: 12px; }
 
-/* ---------------------------------- Login ---------------------------------- */
+/* ==========================================================================
+   LOGIN PAGE
+   ========================================================================== */
 
 .login-page {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, var(--navy) 0%, var(--navy-light) 60%, #3b5b8a 100%);
-  padding: 20px;
+  background: linear-gradient(135deg, var(--navy) 0%, var(--navy-dark) 100%);
+  padding: 24px;
 }
+
 .login-card {
-  width: 100%;
-  max-width: 400px;
-  background: #fff;
+  background: var(--card);
   border-radius: 14px;
-  padding: 32px 28px;
+  padding: 32px;
+  width: 100%;
+  max-width: 420px;
   box-shadow: var(--shadow-lg);
-  text-align: center;
 }
-.login-emblem { font-size: 44px; }
-.login-title { font-size: 19px; color: var(--navy); margin-top: 8px; }
-.login-subtitle { color: var(--text-muted); font-size: 13px; margin-top: 4px; margin-bottom: 20px; }
-.login-form { display: flex; flex-direction: column; gap: 14px; text-align: left; }
-.login-foot { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
-/* ------------------------------ Excel uploader ------------------------------ */
 
-.upload-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; align-items: start; }
+.login-emblem { font-size: 48px; text-align: center; margin-bottom: 12px; }
+.login-title { font-size: 22px; color: var(--navy); text-align: center; margin-bottom: 4px; }
+.login-subtitle { font-size: 13px; color: var(--text-muted); text-align: center; margin-bottom: 16px; }
+.login-form { display: flex; flex-direction: column; gap: 14px; }
+.login-foot { font-size: 12px; color: var(--text-muted); text-align: center; margin-top: 16px; }
+.bootstrap-cta { margin-top: 12px; }
 
-.upload-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+/* Login demo accounts block (development credentials) */
+.login-demo {
+  margin-top: 14px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+.login-demo-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 8px;
+}
+.login-demo-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.login-demo-grid strong { color: var(--navy-dark); }
+
+/* ==========================================================================
+   EXCEL UPLOADER
+   ========================================================================== */
+
+.upload-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.upload-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
 .upload-head .card-title { margin-bottom: 0; }
 
 .dropzone {
@@ -489,7 +686,9 @@ a { color: var(--primary); text-decoration: none; }
 .upload-history-head .card-title { margin: 0; }
 .file-name { font-weight: 600; color: var(--navy-dark); white-space: nowrap; }
 
-/* ------------------------------ Notification msg ---------------------------- */
+/* ==========================================================================
+   NOTIFICATIONS
+   ========================================================================== */
 
 .msg-details summary { cursor: pointer; font-size: 12.5px; color: var(--primary); font-weight: 600; }
 .msg-content {
@@ -503,266 +702,17 @@ a { color: var(--primary); text-decoration: none; }
   max-width: 380px;
 }
 
-/* -------------------------------- Reports ----------------------------------- */
+/* ==========================================================================
+   REPORTS
+   ========================================================================== */
 
 .report-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
 .report-card { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .report-icon { font-size: 28px; }
 .report-desc { font-size: 13px; color: var(--text-muted); flex: 1; }
 
-/* ------------------------------- Responsive --------------------------------- */
-
-@media (max-width: 900px) {
-  .sidebar {
-    position: fixed;
-    left: 0;
-    top: 0;
-    z-index: 90;
-    transform: translateX(-100%);
-    transition: transform 0.2s ease;
-    box-shadow: var(--shadow-lg);
-  }
-  .sidebar-open { transform: translateX(0); }
-  .sidebar-close {
-    display: inline-flex;
-    margin-left: auto;
-    background: none;
-    border: 0;
-    color: #cbd5e1;
-    font-size: 20px;
-    cursor: pointer;
-    padding: 0 4px;
-  }
-  .sidebar-overlay {
-    display: block;
-    position: fixed;
-    inset: 0;
-    background: rgba(15, 23, 42, 0.5);
-    z-index: 80;
-  }
-  .navbar-burger { display: inline-flex; }
-  .navbar-subtitle, .navbar-admin-info { display: none; }
-  .app-content { padding: 16px; }
-}
-
-@media (max-width: 560px) {
-  .page-head { flex-direction: column; }
-  .page-actions { width: 100%; }
-  .page-actions .btn { flex: 1; }
-  .login-card { padding: 24px 18px; }
-  .stat-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-  .toast { top: 12px; right: 12px; left: 12px; max-width: none; }
-  .toolbar .input { min-width: 100%; }
-}
-
-/* -------------------------------- Tables ----------------------------------- */
-
-.table-wrap {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.table th,
-.table td {
-  padding: 8px 10px;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-
-.table th {
-  background: var(--grey-bg);
-  font-weight: 600;
-  color: var(--navy-dark);
-  position: sticky;
-  top: 0;
-  z-index: 2;
-}
-
-.table tbody tr:hover { background: var(--blue-bg); }
-
-.table-sm td { padding: 6px 8px; font-size: 12.5px; }
-.table-sm th { padding: 6px 8px; font-size: 12px; }
-
-.col-actions {
-  text-align: right;
-  white-space: nowrap;
-  width: 1%;
-}
-
-/* Button sizes */
-.btn-sm { font-size: 12px; padding: 4px 10px; }
-.btn-xs { font-size: 11px; padding: 2px 8px; }
-
-/* Button colors */
-.btn-primary { background: var(--navy); color: #fff; border: 1px solid var(--navy); }
-.btn-primary:hover { background: var(--navy-dark); }
-.btn-success { background: var(--green); color: #fff; border: 1px solid var(--green); }
-.btn-success:hover { background: #14532d; }
-.btn-warning { background: var(--amber); color: var(--navy-dark); border: 1px solid var(--amber); }
-.btn-warning:hover { background: #78350f; color: var(--navy-dark); }
-.btn-danger { background: var(--red); color: #fff; border: 1px solid var(--red); }
-.btn-danger:hover { background: #991c1c; }
-
-/* ---------------------------------- Forms ----------------------------------- */
-
-.input {
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 14px;
-  background: var(--card);
-  color: var(--text);
-}
-
-.input:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px var(--blue-bg);
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.form-group label {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--navy-dark);
-}
-
-.field-error { color: var(--red); font-size: 12.5px; font-weight: 600; margin-top: 4px; }
-.hint-text { font-size: 12.5px; color: var(--text-muted); line-height: 1.5; }
-
-.form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  border-radius: 8px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  padding: 8px 16px;
-  font-size: 13px;
-  transition: background 0.15s ease;
-}
-
-.btn-block { width: 100%; }
-
-.btn-secondary {
-  background: #f1f5f9;
-  color: var(--navy-dark);
-  border: 1px solid var(--border);
-}
-.btn-secondary:hover { background: #e2e8f0; color: var(--navy-dark); }
-
-/* Password eye toggle */
-
-.input-eye-wrap { position: relative; }
-.input-eye-wrap .input { width: 100%; padding-right: 42px; }
-
-.eye-btn {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 5px;
-  background: none;
-  border: 0;
-  border-radius: 6px;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.eye-btn:hover { color: var(--navy); background: var(--bg); }
-.eye-btn svg { width: 18px; height: 18px; }
-
-/* Login page layout */
-
-.login-page {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, var(--navy) 0%, var(--navy-dark) 100%);
-  padding: 24px;
-}
-
-.login-card {
-  background: var(--card);
-  border-radius: var(--radius);
-  padding: 32px;
-  width: 100%;
-  max-width: 420px;
-  box-shadow: var(--shadow-lg);
-}
-
-.login-emblem { font-size: 48px; text-align: center; margin-bottom: 12px; }
-.login-title { font-size: 22px; color: var(--navy); text-align: center; margin-bottom: 4px; }
-.login-subtitle { font-size: 13px; color: var(--text-muted); text-align: center; margin-bottom: 16px; }
-.login-form { display: flex; flex-direction: column; gap: 14px; }
-.login-foot { font-size: 12px; color: var(--text-muted); text-align: center; margin-top: 16px; }
-
-/* Bootstrap CTA on login */
-.bootstrap-cta { margin-top: 12px; }
-
-/* Register page layout */
-
-.register-grid {
-  display: grid;
-  grid-template-columns: minmax(320px, 480px) 1fr;
-  gap: 18px;
-  align-items: start;
-}
-
-.register-form { display: flex; flex-direction: column; gap: 12px; }
-.register-form .form-actions { margin-top: 4px; }
-
-.page-wrap {
-  padding: 24px;
-  max-width: 1100px;
-  margin: 0 auto;
-}
-
-.page-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 20px;
-}
-.page-head h1 { font-size: 24px; color: var(--navy-dark); }
-.page-head p { font-size: 13px; color: var(--text-muted); }
-
-.card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-  box-shadow: var(--shadow);
-}
-.card-title { font-size: 16px; color: var(--navy); margin-bottom: 12px; }
-
-@media (max-width: 900px) {
-  .register-grid { grid-template-columns: 1fr; }
-}
 /* ==========================================================================
-   Per-Mandal collapsible sections (Officers / Booths / Allocation pages)
-   Each uploaded file's data renders as its own independent section.
+   PER-MANDAL COLLAPSIBLE SECTIONS (Officers / Booths pages)
    ========================================================================== */
 
 .mandal-section { padding: 0; overflow: hidden; }
@@ -788,6 +738,7 @@ a { color: var(--primary); text-decoration: none; }
   cursor: pointer;
   padding: 2px 4px;
   min-width: 0;
+  font-family: inherit;
 }
 
 .mandal-chevron {
@@ -823,43 +774,61 @@ a { color: var(--primary); text-decoration: none; }
 .mandal-stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
 .mandal-stat-value { font-size: 13px; font-weight: 700; color: var(--navy-dark); }
 
-.mandal-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-left: auto;
-}
+.mandal-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 
 .mandal-body { padding: 0; }
 .mandal-body .table-wrap { border: none; border-radius: 0; box-shadow: none; }
 .mandal-body .empty-state { border: none; }
 
-/* ----------------------------- Login demo accounts --------------------------- */
-.login-demo {
-  margin-top: 14px;
-  padding: 12px;
-  background: var(--bg);
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
-}
-.login-demo-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  margin-bottom: 8px;
-}
-.login-demo-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12.5px;
-  color: var(--text);
-}
-.login-demo-grid strong { color: var(--navy-dark); }
+/* ==========================================================================
+   ALLOCATION PAGE - summary grid + tabs + booth-wise cards
+   ========================================================================== */
 
-/* ----------------------------- Progress bar ---------------------------------- */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+}
+
+.tab-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.tab-btn {
+  padding: 9px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover { background: var(--bg); }
+.tab-btn.active {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+
+/* Booth-wise expandable cards */
+.boothwise-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.booth-card { display: flex; flex-direction: column; gap: 10px; }
+.booth-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.booth-meta { font-size: 12.5px; }
+.booth-body { display: flex; flex-direction: column; gap: 10px; }
+.booth-body .table-wrap { border: 1px solid var(--border); }
+
+/* ==========================================================================
+   PROGRESS BAR
+   ========================================================================== */
+
 .progress-wrap {
   height: 14px;
   background: var(--grey-bg);
@@ -873,7 +842,10 @@ a { color: var(--primary); text-decoration: none; }
   transition: width 0.4s ease;
 }
 
-/* ----------------------------- Officer duty page ----------------------------- */
+/* ==========================================================================
+   OFFICER DUTY GRID (legacy)
+   ========================================================================== */
+
 .officer-duty-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -895,8 +867,71 @@ a { color: var(--primary); text-decoration: none; }
   letter-spacing: 0.03em;
 }
 
-/* ----------------------------- Access denied -------------------------------- */
-.access-denied {
-  text-align: center;
-  padding-top: 40px;
+/* ==========================================================================
+   LEGACY (register page etc. - kept so nothing breaks if still referenced)
+   ========================================================================== */
+
+.register-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 480px) 1fr;
+  gap: 18px;
+  align-items: start;
+}
+.register-form { display: flex; flex-direction: column; gap: 12px; }
+.register-form .form-actions { margin-top: 4px; }
+
+@media (max-width: 900px) {
+  .register-grid { grid-template-columns: 1fr; }
+}
+
+/* ==========================================================================
+   RESPONSIVE DESIGN
+
+   <= 900px (tablet / mobile): the sidebar collapses off-canvas and the main
+   content automatically expands to full width. The burger button in the
+   header opens it as an overlay.
+   ========================================================================== */
+
+@media (max-width: 900px) {
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: var(--shadow-lg);
+    z-index: 90;
+  }
+  .sidebar-open { transform: translateX(0); }
+  .sidebar-close {
+    display: inline-flex;
+    margin-left: auto;
+    background: none;
+    border: 0;
+    color: #cbd5e1;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0 4px;
+  }
+  .sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.5);
+    z-index: 80;
+  }
+  .navbar-burger { display: inline-flex; }
+  .navbar-subtitle, .navbar-admin-info { display: none; }
+  .app-main { padding: 16px; }
+}
+
+@media (max-width: 560px) {
+  .page-head { flex-direction: column; }
+  .page-actions { width: 100%; }
+  .page-actions .btn { flex: 1; }
+  .login-card { padding: 24px 18px; }
+  .stat-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .boothwise-grid { grid-template-columns: 1fr; }
+  .toast { top: 12px; right: 12px; left: 12px; max-width: none; }
+  .toolbar .input { min-width: 100%; }
 }

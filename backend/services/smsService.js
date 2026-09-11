@@ -10,17 +10,23 @@
  *
  * Credentials are ALWAYS read from environment variables - never hardcoded.
  * Every attempt is persisted in MongoDB with a status from:
- *   SEND | PENDING | FAILED | DELIVERED
+ *   PENDING | SENT | FAILED
+ *
+ * Requirement H: no real SMS is ever claimed unless a provider is configured.
+ * The default `mock` provider simulates delivery locally so the student
+ * project has a full PENDING -> SENT lifecycle without any credentials; a
+ * real gateway can be wired later by setting
+ *   SMS_PROVIDER=http
+ *   SMS_PROVIDER_API_URL=...
  */
 
 const crypto = require('crypto');
 const Notification = require('../models/Notification');
 
 const STATUS = {
-  SEND: 'SEND',
   PENDING: 'PENDING',
+  SENT: 'SENT',
   FAILED: 'FAILED',
-  DELIVERED: 'DELIVERED',
 };
 
 const DEFAULT_PROVIDER_ID = 'mock';
@@ -37,9 +43,9 @@ class SmsProvider {
 }
 
 /**
- * Mock provider - used during development/demo. Pretends to deliver the SMS
- * after a short random delay so the SEND -> PENDING -> DELIVERED lifecycle
- * can be observed without any external gateway.
+ * Mock provider - used during development/demo. Simulates delivery locally
+ * (no external gateway, no real SMS claimed): the persisted Notification
+ * record moves PENDING -> SENT so the full lifecycle can be observed.
  */
 class MockSmsProvider extends SmsProvider {
   constructor() {
@@ -150,14 +156,13 @@ function buildAllocationMessage(officer, booth) {
 // ---------------------------------------------------------------------------
 
 /**
- * Sends an SMS to an officer and persists every state change in MongoDB.
+ * Sends a notification message to an officer and persists every state change
+ * in MongoDB with status PENDING / SENT / FAILED (requirement H).
  *
- * @param {object} params
- * @param {object} params.officer      - Officer document (needs mobileNumber, name)
- * @param {object|null} params.allocation - Allocation document (for reference)
- * @param {string} params.message      - ready to send text
- * @param {string} [params.providerName] - override provider ("mock" | "http")
- * @returns {Promise<object>} the saved Notification document
+ * A real SMS provider can be plugged in later via SMS_PROVIDER=http +
+ * SMS_PROVIDER_API_URL / SMS_PROVIDER_API_KEY / SMS_SENDER_ID in .env.
+ * Unless those credentials are configured, the message is only stored as a
+ * mock-local notification — never claimed as a real SMS delivery.
  */
 async function sendSms({ officer, allocation = null, message, providerName }) {
   const provider = createProvider(providerName);
@@ -167,26 +172,26 @@ async function sendSms({ officer, allocation = null, message, providerName }) {
     allocation: allocation ? allocation._id : undefined,
     mobileNumber: officer.mobileNumber,
     message,
-    status: STATUS.SEND,
+    status: STATUS.PENDING,
     provider: provider.name,
   });
 
   try {
     const result = await provider.send(officer.mobileNumber, message);
 
-    notification.status = result.delivered ? STATUS.DELIVERED : STATUS.PENDING;
+    notification.status = result.delivered ? STATUS.SENT : STATUS.PENDING;
     notification.providerMessageId = result.messageId;
     notification.sentAt = new Date();
     await notification.save();
 
-    // A PENDING message from the mock provider is marked DELIVERED shortly
+    // A PENDING message from the mock provider is marked SENT shortly
     // afterwards to fully emulate the real lifecycle.
     if (!result.delivered && provider.name === 'mock') {
       setTimeout(async () => {
         try {
           await Notification.updateOne(
             { _id: notification._id, status: STATUS.PENDING },
-            { $set: { status: STATUS.DELIVERED } }
+            { $set: { status: STATUS.SENT } }
           );
         } catch {
           // best-effort background update

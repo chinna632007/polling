@@ -23,10 +23,10 @@ async function sendAllocationNotification(req, res, next) {
         message: 'This officer has no booth allocation - cannot send a notification',
       });
     }
-    if (allocation.status !== 'Allocated') {
+    if (allocation.status !== 'ALLOCATED') {
       return res.status(400).json({
         success: false,
-        message: 'SMS can only be sent after the allocation is approved (status: Allocated)',
+        message: 'Notification can only be sent for an ALLOCATED allocation',
       });
     }
     if (!allocation.officer) {
