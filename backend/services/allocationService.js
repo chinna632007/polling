@@ -9,12 +9,17 @@
  *   3. Skip officers that already hold an ALLOCATED allocation.
  *   4. For every unallocated officer find suitable booths:
  *        - same Mandal
- *        - available capacity
+ *        - available capacity (verified against the DATABASE, not a cache)
  *        - NOT related to the officer's residential locality
- *   5. Choose the booth with the lowest allocatedOfficerCount (balanced
- *      distribution); deterministic tie-break by boothId.
- *   6. Create the allocation (status ALLOCATED) and resync booth counters
- *      from the actual allocation documents (requirement B).
+ *   5. Choose the booth with the LOWEST allocation ratio
+ *      (allocatedOfficerCount / requiredOfficers) for balanced distribution,
+ *      then most available slots, then booth number ascending.
+ *   6. Re-verify the booth capacity against the database immediately before
+ *      creating the allocation, then create it (status ALLOCATED) and
+ *      recalculate the booth counters from the real allocation documents.
+ *      A compensating guard cancels the just-created allocation if a
+ *      concurrent write pushed the booth over its required officers, so
+ *      allocatedOfficerCount > requiredOfficers can NEVER persist.
  *   7. Report unallocated officers with a clear reason.
  */
 
@@ -23,6 +28,7 @@ const Officer = require('../models/Officer');
 const Booth = require('../models/Booth');
 const Allocation = require('../models/Allocation');
 const countService = require('./countService');
+const { compareOfficerIds, compareBoothIds, sortByBoothId } = require('../utils/naturalSort');
 const {
   normalizeAddress,
   isRelated,
@@ -75,8 +81,10 @@ function groupBy(list, keyFn) {
 }
 
 /**
- * Booth suitability score (requirement D - balanced distribution):
- *   - dominant term prefers booths with the LOWEST allocatedOfficerCount
+ * Booth suitability score:
+ *   - dominant term prefers booths with the LOWEST allocation ratio
+ *     (allocatedOfficerCount / requiredOfficers) so distribution stays
+ *     balanced even when booth capacities differ
  *   - small bonus for a different ward (secondary rule only)
  *   - small bonus for remaining capacity
  */
@@ -85,8 +93,10 @@ function scoreSuitability(officer, booth, capacity) {
   if (check.related) return { suitable: false, score: -Infinity, check };
 
   let score = 0;
+  const required = Math.max(0, booth.requiredOfficers || 0);
   const current = Math.max(0, booth.allocatedOfficerCount || 0);
-  score += 1000 * (1 / (current + 1)); // prefer fewer allocated officers
+  const ratio = required > 0 ? current / required : 1; // 0 = empty, 1 = full
+  score += 1000 * (1 - ratio); // primary rule: prefer lowest allocation ratio
 
   const officerWard = normalizeAddress(officer.ward);
   const boothWard = normalizeAddress(booth.ward);
@@ -94,6 +104,46 @@ function scoreSuitability(officer, booth, capacity) {
 
   score += Math.min(Math.max(0, capacity || 0), 5) * 2;
   return { suitable: true, score, check };
+}
+
+/**
+ * Deterministic booth-choice ranking used by the automatic engine:
+ *   1. lowest allocation ratio (allocated / required)  -> balanced
+ *   2. more available slots
+ *   3. booth number ascending (natural order)
+ *   4. _id as the final deterministic tie-break
+ */
+function compareBoothChoices(a, b) {
+  const requiredA = Math.max(0, a.required || 0);
+  const requiredB = Math.max(0, b.required || 0);
+  const ratioA = requiredA > 0 ? (a.allocated || 0) / requiredA : 1;
+  const ratioB = requiredB > 0 ? (b.allocated || 0) / requiredB : 1;
+  if (ratioA !== ratioB) return ratioA - ratioB;
+  const slotsA = Math.max(0, a.available || 0);
+  const slotsB = Math.max(0, b.available || 0);
+  if (slotsA !== slotsB) return slotsB - slotsA; // more free slots first
+  const byNumber = compareBoothIds(a.booth?.boothNumber, b.booth?.boothNumber);
+  if (byNumber !== 0) return byNumber;
+  return String(a.booth?._id || '').localeCompare(String(b.booth?._id || ''));
+}
+
+/** Public capacity snapshot for API responses (spec: booth allocation response). */
+async function boothCapacitySnapshot(boothRef) {
+  try {
+    const c = await countService.checkBoothCapacity(boothRef);
+    return {
+      boothId: c.boothId,
+      boothCode: c.boothCode,
+      boothNumber: c.boothNumber,
+      requiredOfficers: c.requiredOfficers,
+      allocatedOfficerCount: c.allocatedOfficerCount,
+      availableSlots: c.availableSlots,
+      isFull: c.isFull,
+      overAllocated: c.overAllocated,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Builds a clear reason when no suitable booth exists for an officer. */
@@ -163,11 +213,14 @@ async function findSuitableBoothsForOfficer(officer) {
       requiredOfficers: required,
       allocatedOfficerCount: live,
       availableSlots,
+      isFull: availableSlots <= 0,
+      allocationRatio: required > 0 ? live / required : 1,
       addressMatchScore: Math.max(0, Math.round(check.score)),
       reason: compatibilityReason(officer, booth),
     });
   }
-  return result;
+  // Booth number ascending (natural: PB2 before PB10).
+  return sortByBoothId(result);
 }
 
 // ---------------------------------------------------------------------------
@@ -228,12 +281,20 @@ async function runAllocation() {
         const candidates = [];
         for (const booth of mandalBooths) {
           const required = Math.max(0, booth.requiredOfficers || 0);
-          const live = liveCounts.get(String(booth._id)) || 0;
+          // Clamp against the live DB-derived count: never trust stale counters.
+          const live = Math.min(liveCounts.get(String(booth._id)) || 0, required);
           const available = Math.max(0, required - live);
-          if (available <= 0) continue;
+          if (available <= 0) continue; // booth capacity is already reached
           const evalResult = scoreSuitability(officer, { ...booth, allocatedOfficerCount: live }, available);
           if (!evalResult.suitable) continue;
-          candidates.push({ booth, available, score: evalResult.score, check: evalResult.check });
+          candidates.push({
+            booth,
+            required,
+            allocated: live,
+            available,
+            score: evalResult.score,
+            check: evalResult.check,
+          });
         }
 
         if (candidates.length === 0) {
@@ -245,34 +306,81 @@ async function runAllocation() {
           continue;
         }
 
-        // Balanced choice (requirement D) + deterministic tie-break.
-        candidates.sort(
-          (a, b) => b.score - a.score || String(a.booth._id).localeCompare(String(b.booth._id))
-        );
+        // Balanced choice: lowest allocation ratio first, then most free
+        // slots, then booth number ascending (deterministic).
+        candidates.sort(compareBoothChoices);
+        // Deterministic choice: candidates were sorted with the lowest
+        // allocation ratio first (balanced distribution requirement).
         const best = candidates[0];
 
-        // Final safety check (requirement F): still no active allocation.
+
+        // Final safety check: still no active allocation for this officer.
         const already = await Allocation.exists({ officer: officer._id, status: STATUS.ALLOCATED });
         if (already) {
           result.skipped += 1;
           continue;
         }
 
-        const allocation = await Allocation.create({
-          allocationId: await nextAllocationId(officer),
-          officer: officer._id,
-          officerId: officer.officerId,
-          booth: best.booth._id,
-          boothId: best.booth.boothId,
-          mandal: officer.mandal || best.booth.mandal || '',
-          status: STATUS.ALLOCATED,
-          allocationDate: new Date(),
-          allocatedAt: new Date(),
-          adminApproved: true,
-          addressMatchScore: Math.max(0, Math.round(best.check.score)),
-          addressValidationReason: compatibilityReason(officer, best.booth),
-          allocationReason: (best.check.reasons && best.check.reasons[0]) || '',
-        });
+        // Spec requirement: re-check the ACTUAL database count immediately
+        // before creating the allocation (booth may have filled concurrently).
+        try {
+          await countService.assertBoothHasCapacity(best.booth._id);
+        } catch (capacityErr) {
+          result.unallocated += 1;
+          result.unallocatedOfficers.push({
+            ...officerToUnallocatedRow(officer),
+            reason: `All suitable booths are full. ${capacityErr.message}`,
+          });
+          continue;
+        }
+
+        let allocation;
+        try {
+          allocation = await Allocation.create({
+            allocationId: await nextAllocationId(officer),
+            officer: officer._id,
+            officerId: officer.officerId,
+            booth: best.booth._id,
+            boothId: best.booth.boothId,
+            mandal: officer.mandal || best.booth.mandal || '',
+            status: STATUS.ALLOCATED,
+            allocationDate: new Date(),
+            allocatedAt: new Date(),
+            adminApproved: true,
+            addressMatchScore: Math.max(0, Math.round(best.check.score)),
+            addressValidationReason: compatibilityReason(officer, best.booth),
+            allocationReason: (best.check.reasons && best.check.reasons[0]) || '',
+          });
+        } catch (createError) {
+          // Duplicate key => the officer got an active allocation from a
+          // concurrent write (unique partial index). Treat as already allocated.
+          if (createError && createError.code === 11000) {
+            result.skipped += 1;
+            continue;
+          }
+          throw createError;
+        }
+
+        // Compensating guard: re-verify against the DATABASE immediately after
+        // the create. If a concurrent write pushed the booth over its
+        // required officers, cancel the just-created allocation so
+        // allocatedOfficerCount > requiredOfficers can never persist.
+        const liveNow = await countService.getLiveAllocatedCount(best.booth._id);
+        if (liveNow > best.required) {
+          allocation.status = STATUS.CANCELLED;
+          allocation.cancelledAt = new Date();
+          allocation.adminApproved = false;
+          allocation.allocationReason =
+            'Automatic guard: booth capacity exceeded by a concurrent write';
+          await allocation.save();
+          await countService.recalculateBoothCounts(best.booth._id);
+          result.unallocated += 1;
+          result.unallocatedOfficers.push({
+            ...officerToUnallocatedRow(officer),
+            reason: 'Booth capacity was exceeded by a concurrent write - please retry allocation.',
+          });
+          continue;
+        }
 
         created.push(allocation);
         liveCounts.set(String(best.booth._id), (liveCounts.get(String(best.booth._id)) || 0) + 1);
@@ -331,12 +439,14 @@ async function cancelAllocation(allocationId) {
   allocation.adminApproved = false;
   await allocation.save();
 
-  // Recalculate booth count from the remaining active allocations.
+  // Recalculate booth count from the remaining active allocations - the booth
+  // immediately gets its free slot back.
+  let booth = null;
   if (allocation.booth) {
-    await countService.recalculateBoothCounts(allocation.booth._id);
+    booth = await countService.recalculateBoothCounts(allocation.booth._id);
   }
 
-  return { changed: true, message: 'Allocation cancelled successfully', allocation };
+  return { changed: true, message: 'Allocation cancelled successfully', allocation, booth };
 }
 
 // ---------------------------------------------------------------------------
@@ -403,17 +513,44 @@ async function reallocateOfficer(allocationId, preferredBoothId = null) {
   if (preferredBoothId) {
     chosen = suitableBooths.find((b) => String(b._id) === String(preferredBoothId)) || null;
     if (!chosen) {
-      const error = new Error('Preferred booth is not suitable or has no available capacity');
-      error.statusCode = 409;
+      // Give the admin a precise reason: full booth vs unsuitable booth.
+      const BoothDoc = require('../models/Booth');
+      const preferredBooth = await BoothDoc.findById(preferredBoothId).lean().catch(() => null);
+      if (preferredBooth) {
+        const capacity = await countService.checkBoothCapacity(preferredBooth._id);
+        if (!capacity.allowed) {
+          const error = new Error(
+            `Cannot reallocate: this booth is already full. Required officers: ${capacity.requiredOfficers}, ` +
+              `Allocated officers: ${capacity.allocatedOfficerCount}. The officer's current allocation is unchanged.`
+          );
+          error.statusCode = 409;
+          error.details = capacity;
+          throw error;
+        }
+        const error = new Error(
+          "Preferred booth is not suitable (different Mandal or related to the officer's residential locality). " +
+            "The officer's current allocation is unchanged."
+        );
+        error.statusCode = 409;
+        throw error;
+      }
+      const error = new Error('Preferred booth not found');
+      error.statusCode = 404;
       throw error;
     }
   } else {
-    // Prefer the booth with the fewest allocated officers (balanced).
-    const alternatives = suitableBooths.filter((b) => String(b._id) !== String(current.booth?._id));
-    alternatives.sort(
-      (a, b) => a.allocatedOfficerCount - b.allocatedOfficerCount || String(a._id).localeCompare(String(b._id))
-    );
-    chosen = alternatives[0] || null;
+    // Balanced auto-choice: lowest allocation ratio, then most free slots,
+    // then booth number ascending.
+    const alternatives = suitableBooths
+      .filter((b) => String(b._id) !== String(current.booth?._id))
+      .map((b) => ({
+        booth: b,
+        required: b.requiredOfficers || 0,
+        allocated: b.allocatedOfficerCount || 0,
+        available: b.availableSlots || 0,
+      }));
+    alternatives.sort(compareBoothChoices);
+    chosen = alternatives[0]?.booth || null;
   }
   if (!chosen) {
     const error = new Error('No suitable alternative booth available for reallocation');
@@ -421,11 +558,27 @@ async function reallocateOfficer(allocationId, preferredBoothId = null) {
     throw error;
   }
 
+  // STEP 1 (spec): verify the NEW booth has capacity BEFORE changing the old
+  // allocation. If the new booth is full, stop - the old allocation is NOT
+  // modified.
+  try {
+    await countService.assertBoothHasCapacity(chosen._id);
+  } catch (capacityError) {
+    capacityError.message =
+      `Cannot reallocate: ${capacityError.message} The officer's current allocation is unchanged.`;
+    throw capacityError;
+  }
+
   return runInTransaction(async () => {
     const oldBoothId = current.booth?._id || null;
 
-    // Requirement F: the old allocation becomes REALLOCATED BEFORE the new one
-    // becomes active, so the officer always has at most one active allocation.
+    // STEP 1 again inside the write path (concurrency safety): re-check the
+    // actual active allocation count of the NEW booth before any change.
+    await countService.assertBoothHasCapacity(chosen._id);
+
+    // STEP 3: the old allocation becomes REALLOCATED only after the new
+    // booth's capacity is confirmed, so the officer always has at most one
+    // active allocation.
     current.status = STATUS.REALLOCATED;
     current.reallocatedAt = new Date();
     current.adminApproved = false;
@@ -438,6 +591,7 @@ async function reallocateOfficer(allocationId, preferredBoothId = null) {
       throw error;
     }
 
+    // STEP 4: create the new allocation with status ALLOCATED.
     const newAllocation = await Allocation.create({
       allocationId: await nextAllocationId(officer),
       officer: officer._id,
@@ -455,22 +609,198 @@ async function reallocateOfficer(allocationId, preferredBoothId = null) {
       allocationReason: chosen.reason || '',
     });
 
+    // Compensating guard: if a concurrent write filled the booth between the
+    // check and the create, undo completely (cancel the new allocation and
+    // restore the old one) so capacity limits can never be exceeded.
+    const liveNow = await countService.getLiveAllocatedCount(chosen._id);
+    const requiredOfficers = Math.max(0, Number(chosen.requiredOfficers) || 0);
+    if (liveNow > requiredOfficers) {
+      await Allocation.deleteOne({ _id: newAllocation._id });
+      current.status = STATUS.ALLOCATED;
+      current.reallocatedAt = null;
+      current.adminApproved = true;
+      await current.save();
+      const error = new Error(
+        'Cannot reallocate: this booth is already full (capacity changed during the operation). ' +
+          "The officer's current allocation is unchanged."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    // STEP 5: recalculate BOTH booth counts (old booth + new booth).
     if (oldBoothId) {
       await countService.recalculateBoothCounts(oldBoothId);
     }
-    await countService.recalculateBoothCounts(chosen._id);
+    const boothSnapshot = await countService.recalculateBoothCounts(chosen._id);
 
-    return { changed: true, newAllocation, oldAllocation: current, chosenBooth: chosen };
+    return { changed: true, newAllocation, oldAllocation: current, chosenBooth: chosen, booth: boothSnapshot };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Manual allocation (admin picks the booth explicitly)
+// ---------------------------------------------------------------------------
+
+/** Resolves an officer by Mongo _id or by unique officerId code (case-insensitive). */
+async function resolveOfficer(officerRef) {
+  const value = String(officerRef || '').trim();
+  if (!value) return null;
+  let officer = null;
+  if (mongoose.isValidObjectId(value)) {
+    officer = await Officer.findById(value);
+  }
+  if (!officer) {
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    officer = await Officer.findOne({ officerId: new RegExp(`^${escaped}$`, 'i') });
+  }
+  return officer;
+}
+
+/** Resolves a booth by Mongo _id or by unique boothId code (case-insensitive). */
+async function resolveBooth(boothRef) {
+  const value = String(boothRef || '').trim();
+  if (!value) return null;
+  let booth = null;
+  if (mongoose.isValidObjectId(value)) {
+    booth = await Booth.findById(value);
+  }
+  if (!booth) {
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    booth = await Booth.findOne({ boothId: new RegExp(`^${escaped}$`, 'i') });
+  }
+  return booth;
+}
+
+function httpError(statusCode, message, details) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  if (details) error.details = details;
+  return error;
+}
+
+/**
+ * Manual allocation with the FULL capacity validation chain:
+ *   1. booth exists            4. booth active
+ *   2. officer exists          5. same Mandal
+ *   3. officer active          6. officer has no active allocation
+ *   7. booth has capacity (actual DB count < requiredOfficers)
+ * The capacity is re-verified inside the write path and a compensating
+ * guard undoes the allocation if a concurrent write filled the last slot.
+ */
+async function manualAllocate(officerRef, boothRef, adminId = null) {
+  // 1 + 2: officer / booth existence.
+  const officer = await resolveOfficer(officerRef);
+  if (!officer) throw httpError(404, `Officer '${officerRef}' not found`);
+  const booth = await resolveBooth(boothRef);
+  if (!booth) throw httpError(404, `Booth '${boothRef}' not found`);
+
+  // 3 + 4: both records must be active.
+  if (officer.isActive === false) {
+    throw httpError(400, `Officer '${officer.officerId}' is inactive and cannot be allocated`);
+  }
+  if (booth.isActive === false) {
+    throw httpError(400, `Booth ${booth.boothNumber} (${booth.boothId}) is inactive`);
+  }
+
+  // 5: same Mandal rule (allocation engine never crosses Mandals).
+  if (mandalKey(officer.mandal) !== mandalKey(booth.mandal)) {
+    throw httpError(
+      400,
+      `Officer '${officer.officerId}' belongs to Mandal '${officer.mandal || 'Unspecified'}' but booth ` +
+        `${booth.boothNumber} is in Mandal '${booth.mandal || 'Unspecified'}'. ` +
+        'Manual allocation must stay within the same Mandal.'
+    );
+  }
+
+  // 6: one active allocation per officer.
+  const alreadyActive = await Allocation.exists({
+    officer: officer._id,
+    status: STATUS.ALLOCATED,
+  });
+  if (alreadyActive) {
+    throw httpError(
+      409,
+      `Officer '${officer.officerId}' already has an active allocation. Cancel or reallocate it first.`
+    );
+  }
+
+  // 7: capacity check against the actual DB allocations (NOT the stored counter).
+  const capacity = await countService.checkBoothCapacity(booth._id);
+  if (!capacity.allowed) {
+    throw httpError(
+      409,
+      capacity.overAllocated
+        ? `Booth ${capacity.boothNumber} is over-allocated (required officers: ${capacity.requiredOfficers}, ` +
+            `allocated officers: ${capacity.allocatedOfficerCount}). Run the capacity repair first.`
+        : `This booth is already full. Required officers: ${capacity.requiredOfficers}, ` +
+            `Allocated officers: ${capacity.allocatedOfficerCount}.`,
+      capacity
+    );
+  }
+
+  return runInTransaction(async () => {
+    // Re-verify capacity inside the write path (concurrency safety).
+    await countService.assertBoothHasCapacity(booth._id);
+
+    let newAllocation;
+    try {
+      newAllocation = await Allocation.create({
+        allocationId: await nextAllocationId(officer),
+        officer: officer._id,
+        officerId: officer.officerId,
+        booth: booth._id,
+        boothId: booth.boothId,
+        mandal: officer.mandal || booth.mandal || '',
+        status: STATUS.ALLOCATED,
+        allocationDate: new Date(),
+        allocatedAt: new Date(),
+        adminApproved: true,
+        allocatedBy: adminId || undefined,
+        addressMatchScore: 0,
+        addressValidationReason: 'Manual allocation by admin (locality rule overridden)',
+        allocationReason: 'Manual allocation by admin',
+      });
+    } catch (createError) {
+      if (createError && createError.code === 11000) {
+        throw httpError(
+          409,
+          `Officer '${officer.officerId}' already has an active allocation (concurrent write detected).`
+        );
+      }
+      throw createError;
+    }
+
+    // Compensating guard: never persist an allocation that exceeds capacity.
+    const liveNow = await countService.getLiveAllocatedCount(booth._id);
+    const requiredOfficers = Math.max(0, Number(booth.requiredOfficers) || 0);
+    if (liveNow > requiredOfficers) {
+      await Allocation.deleteOne({ _id: newAllocation._id });
+      throw httpError(
+        409,
+        'This booth is already full (capacity changed during the operation). No allocation was made.'
+      );
+    }
+
+    const boothSnapshot = await countService.recalculateBoothCounts(booth._id);
+    return { allocation: newAllocation, booth: boothSnapshot, changed: true };
   });
 }
 
 /** Builds rich allocation rows (officer + booth populated) for tables/reports. */
 async function getAllocationRows(filter = {}) {
-  return Allocation.find(filter)
+  const rows = await Allocation.find(filter)
     .populate('officer')
     .populate('booth')
     .sort({ createdAt: -1 })
     .lean();
+  // Officer ID ascending (natural numeric order: OFF1 < OFF2 < OFF10).
+  return rows.sort((a, b) =>
+    compareOfficerIds(
+      a.officer?.officerId || a.officerId || '',
+      b.officer?.officerId || b.officerId || ''
+    )
+  );
 }
 
 module.exports = {
@@ -478,9 +808,14 @@ module.exports = {
   makeAllocationId,
   nextAllocationId,
   scoreSuitability,
+  compareBoothChoices,
   runAllocation,
   cancelAllocation,
   reallocateOfficer,
+  manualAllocate,
+  resolveOfficer,
+  resolveBooth,
   findSuitableBoothsForOfficer,
+  boothCapacitySnapshot,
   getAllocationRows,
 };

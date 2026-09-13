@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api, { getErrorMessage } from '../services/api';
 import Spinner from './Spinner';
+import { compareBoothIds } from '../utils/naturalSort';
 
 /**
  * Reallocate modal (spec section 16).
@@ -107,6 +108,7 @@ export default function ReallocateModal({ allocation, onClose, onDone }) {
               <tbody>
                 {booths
                   .filter((b) => String(b._id) !== String(current?._id))
+                  .sort((a, b) => compareBoothIds(a.boothNumber, b.boothNumber))
                   .map((b) => (
                     <tr key={b._id}>
                       <td>

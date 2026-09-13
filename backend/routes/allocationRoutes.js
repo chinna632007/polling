@@ -5,8 +5,11 @@ const {
   getAllocations,
   getAllocationMandals,
   getSuitableBooths,
+  manualAllocateAction,
   reallocateAllocation,
   cancelAllocationAction,
+  getOverAllocatedBooths,
+  repairOverAllocatedBooths,
   getDashboardStats,
   deleteAllAllocations,
   deleteAllocationsByMandal,
@@ -19,6 +22,17 @@ router.use(protect); // every allocation endpoint requires a valid JWT
 
 // POST /api/allocation/run - run the automatic allocation algorithm
 router.post('/run', runAllocation);
+
+// POST /api/allocation/manual - admin manually assigns an officer to a booth
+// (full capacity validation happens in the backend, never only in the UI)
+router.post('/manual', manualAllocateAction);
+
+// GET /api/allocation/over-allocated - data-safety report (over-filled booths)
+router.get('/over-allocated', getOverAllocatedBooths);
+
+// POST /api/allocation/over-allocated/repair - safe correction process
+// (keeps the earliest valid allocations, marks excess ones for review)
+router.post('/over-allocated/repair', repairOverAllocatedBooths);
 
 // GET /api/allocation/mandals - per-Mandal overview
 router.get('/mandals', getAllocationMandals);

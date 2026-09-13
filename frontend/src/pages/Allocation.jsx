@@ -8,6 +8,7 @@ import Spinner from '../components/Spinner';
 import Toast from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { docDownload } from '../services/download';
+import { sortByOfficerId } from '../utils/naturalSort';
 
 const TABS = [
   { id: 'allocated', label: 'Allocated Officers' },
@@ -71,12 +72,25 @@ export default function Allocation() {
       }));
   }, [officers, allocatedList, runResult]);
 
+  // Defensive natural sort: Officer ID ascending (OFF1 < OFF2 < OFF10).
+  // The /api/officers endpoint already sorts, but this guarantees correctness
+  // regardless of any future API changes.
+  const sortedUnallocatedList = useMemo(
+    () => sortByOfficerId(unallocatedList),
+    [unallocatedList]
+  );
+
   const allocationsByBooth = useMemo(() => {
     const map = {};
     allocatedList.forEach((a) => {
       const key = String(a.booth?._id || a.booth);
       if (!map[key]) map[key] = [];
       map[key].push(a);
+    });
+    // Ensure each booth's officer list is sorted ascending by Officer ID
+    // (natural: OFF1 < OFF2 < OFF10) — spec requirement 12.
+    Object.keys(map).forEach((key) => {
+      map[key] = sortByOfficerId(map[key]);
     });
     return map;
   }, [allocatedList]);
@@ -347,7 +361,7 @@ export default function Allocation() {
                   </tr>
                 </thead>
                 <tbody>
-                  {unallocatedList.map((o, idx) => (
+                  {sortedUnallocatedList.map((o, idx) => (
                     <tr key={o._id}>
                       <td>{idx + 1}</td>
                       <td><span className="mono">{o.officerId}</span></td>

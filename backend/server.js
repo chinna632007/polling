@@ -107,14 +107,26 @@ async function seedMainAdmin() {
 
   // Requirement B: booth counters are rebuilt from allocation documents.
   try {
-    await countService.resyncAllBoothCounts();
+    const sync = await countService.resyncAllBoothCounts();
     console.log('[BOOT] Booth counters resynced from ALLOCATED allocations');
+    if (sync.overAllocated && sync.overAllocated.length > 0) {
+      console.warn('[BOOT] WARNING: over-allocated booths detected (required officers exceeded):');
+      sync.overAllocated.forEach((b) =>
+        console.warn(
+          `[BOOT]   Booth ${b.boothNumber || b.boothCode}: required ${b.requiredOfficers}, ` +
+            `allocated ${b.actualAllocatedOfficers}, excess ${b.excessOfficers}`
+        )
+      );
+      console.warn(
+        '[BOOT] Run GET /api/allocation/over-allocated and POST /api/allocation/over-allocated/repair to fix.'
+      );
+    }
   } catch (error) {
     console.warn('[BOOT] Could not resync booth counts:', error.message);
   }
 }
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5003;
 
 (async function start() {
   await connectDB();

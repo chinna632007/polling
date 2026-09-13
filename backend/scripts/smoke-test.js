@@ -173,12 +173,41 @@ test('conflicted (related) booth is rejected with -Infinity score', () => {
   assert.strictEqual(r.score, -Infinity);
 });
 
-test('booth with fewer allocated officers scores higher (balance rule)', () => {
-  const light = { ...boothOtherLocality, allocatedOfficerCount: 0 };
-  const heavy = { ...boothOtherLocality, allocatedOfficerCount: 4 };
-  const r1 = scoreSuitability(officerA, light, 2);
-  const r2 = scoreSuitability(officerA, heavy, 2);
-  assert.ok(r1.score > r2.score, 'lower occupancy should score better');
+test('booth with lower allocation ratio scores higher (balance rule)', () => {
+  const light = { ...boothOtherLocality, requiredOfficers: 4, allocatedOfficerCount: 0 };
+  const heavy = { ...boothOtherLocality, requiredOfficers: 4, allocatedOfficerCount: 4 };
+  const r1 = scoreSuitability(officerA, light, 4);
+  const r2 = scoreSuitability(officerA, heavy, 0);
+  assert.ok(r1.score > r2.score, 'lower allocation ratio should score better');
+});
+
+console.log('');
+console.log('natural Officer ID sorting tests');
+console.log('--------------------------------');
+
+const { compareOfficerIds, sortByOfficerId } = require('../utils/naturalSort');
+
+test('OFF1, OFF10, OFF2, OFF20, OFF3 sort numerically ascending', () => {
+  const sorted = ['OFF10', 'OFF1', 'OFF20', 'OFF2', 'OFF3'].sort(compareOfficerIds);
+  assert.deepStrictEqual(sorted, ['OFF1', 'OFF2', 'OFF3', 'OFF10', 'OFF20']);
+});
+
+test('OFF001..OFF010 style padded IDs still sort ascending', () => {
+  const sorted = ['OFF010', 'OFF002', 'OFF005', 'OFF001'].sort(compareOfficerIds);
+  assert.deepStrictEqual(sorted, ['OFF001', 'OFF002', 'OFF005', 'OFF010']);
+});
+
+test('allocation rows sort by populated officer officerId ascending', () => {
+  const rows = [
+    { _id: '3', officer: { officerId: 'OFF010' } },
+    { _id: '1', officer: { officerId: 'OFF001' } },
+    { _id: '2', officer: { officerId: 'OFF002' } },
+  ];
+  const sorted = sortByOfficerId(rows, (a) => a.officer?.officerId);
+  assert.deepStrictEqual(
+    sorted.map((r) => r.officer.officerId),
+    ['OFF001', 'OFF002', 'OFF010']
+  );
 });
 
 console.log('');

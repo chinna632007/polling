@@ -1,4 +1,5 @@
 import Badge from './Badge';
+import { sortByOfficerId } from '../utils/naturalSort';
 
 /**
  * Officers table. Scrolls horizontally on small screens.
@@ -12,7 +13,8 @@ export default function OfficerTable({ officers = [], onEdit, onDelete, loading 
     return <p className="empty-state">No officers found. Upload or add one to begin.</p>;
   }
 
-  // Role-aware: when the logged-in user may not edit/delete, hide the column entirely.
+  // Defensive natural sort by Officer ID ascending (OFF1 < OFF2 < OFF10).
+  const sorted = sortByOfficerId(officers);
   const showActions = Boolean(onEdit) || Boolean(onDelete);
 
   return (
@@ -33,7 +35,7 @@ export default function OfficerTable({ officers = [], onEdit, onDelete, loading 
           </tr>
         </thead>
         <tbody>
-          {officers.map((o) => (
+          {sorted.map((o) => (
             <tr key={o._id}>
               <td>
                 <span className="mono">{o.officerId}</span>

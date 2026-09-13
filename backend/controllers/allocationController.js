@@ -5,6 +5,7 @@ const Notification = require('../models/Notification');
 const allocationService = require('../services/allocationService');
 const countService = require('../services/countService');
 const { scopeFilter, notificationScopeFilter, escapeRegex } = require('../services/roleService');
+const { compareOfficerIds } = require('../utils/naturalSort');
 
 const STATUS = allocationService.STATUS; // ALLOCATED / CANCELLED / REALLOCATED
 
@@ -59,6 +60,13 @@ async function getAllocations(req, res, next) {
         .lean(),
       Allocation.countDocuments(filter),
     ]);
+    // Officer ID ascending (natural numeric order: OFF1 < OFF2 < OFF10).
+    data.sort((a, b) =>
+      compareOfficerIds(
+        a.officer?.officerId || a.officerId || '',
+        b.officer?.officerId || b.officerId || ''
+      )
+    );
     return res.json({
       success: true,
       data,
@@ -183,7 +191,22 @@ async function getSuitableBooths(req, res, next) {
 async function cancelAllocationAction(req, res, next) {
   try {
     const result = await allocationService.cancelAllocation(req.params.id);
-    return res.json({ success: true, message: result.message, data: result.allocation });
+    // Include the updated booth capacity snapshot (spec API response shape).
+    const booth = result.booth
+      ? {
+          requiredOfficers: result.booth.requiredOfficers,
+          allocatedOfficerCount: result.booth.allocatedOfficerCount,
+          availableSlots: result.booth.availableSlots,
+          isFull: result.booth.availableSlots <= 0,
+          overAllocated: result.booth.overAllocated || false,
+        }
+      : null;
+    return res.json({
+      success: true,
+      message: result.message,
+      data: result.allocation,
+      booth,
+    });
   } catch (error) {
     next(error);
   }
@@ -194,6 +217,15 @@ async function reallocateAllocation(req, res, next) {
   try {
     const preferredBoothId = req.body?.preferredBoothId || null;
     const result = await allocationService.reallocateOfficer(req.params.id, preferredBoothId);
+    const booth = result.booth
+      ? {
+          requiredOfficers: result.booth.requiredOfficers,
+          allocatedOfficerCount: result.booth.allocatedOfficerCount,
+          availableSlots: result.booth.availableSlots,
+          isFull: result.booth.availableSlots <= 0,
+          overAllocated: result.booth.overAllocated || false,
+        }
+      : null;
     return res.json({
       success: true,
       message: 'Officer reallocated successfully',
@@ -201,7 +233,129 @@ async function reallocateAllocation(req, res, next) {
         newAllocation: result.newAllocation,
         oldAllocation: result.oldAllocation,
         chosenBooth: result.chosenBooth,
+        booth,
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/allocation/manual  { officerId, boothId }
+ * Admin manually assigns an unallocated officer to a specific booth.
+ * The backend enforces the full validation chain (booth existence, activity,
+ * same-Mandal, single active allocation per officer, and the booth
+ * requiredOfficers capacity check against the actual DB allocations).
+ */
+async function manualAllocateAction(req, res, next) {
+  try {
+    const { officerId, boothId } = req.body || {};
+    if (!officerId || !boothId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both officerId and boothId are required',
+      });
+    }
+    const result = await allocationService.manualAllocate(officerId, boothId, req.user?._id);
+    const booth = result.booth || {};
+    return res.status(201).json({
+      success: true,
+      message: `Officer ${result.allocation.officerId} manually allocated to booth ${booth.boothNumber || ''}`.trim(),
+      data: result.allocation,
+      booth: {
+        boothId: result.allocation.booth,
+        boothNumber: booth.boothNumber,
+        requiredOfficers: booth.requiredOfficers,
+        allocatedOfficerCount: booth.allocatedOfficerCount,
+        availableSlots: booth.availableSlots,
+        isFull: booth.availableSlots <= 0,
+        overAllocated: booth.overAllocated || false,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/allocation/over-allocated
+ * Data-safety report: booths whose ACTUAL active allocations exceed
+ * requiredOfficers (Booth Number, Required, Actual, Excess) plus per-officer
+ * allocation rows with keep / flagged-for-review markers.
+ */
+async function getOverAllocatedBooths(req, res, next) {
+  try {
+    const overBooths = await countService.findOverAllocatedBooths();
+    const report = [];
+    for (const booth of overBooths) {
+      // Earliest allocations (by allocationDate) are the "keep" candidates.
+      const allocations = await Allocation.find({ booth: booth._id, status: STATUS.ALLOCATED })
+        .populate('officer', 'officerId officerName designation mobileNumber')
+        .sort({ allocationDate: 1, createdAt: 1 })
+        .lean();
+      const marked = allocations.map((a, index) => ({
+        _id: a._id,
+        allocationId: a.allocationId,
+        officerId: a.officer?.officerId || a.officerId || '',
+        officerName: a.officer?.officerName || '',
+        allocationDate: a.allocationDate,
+        keep: index < booth.requiredOfficers, // earliest valid allocations kept
+        flaggedForReview: index >= booth.requiredOfficers,
+      }));
+      report.push({ ...booth, allocations: marked });
+    }
+    return res.json({ success: true, count: report.length, data: report });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/allocation/over-allocated/repair
+ * Safe correction for over-allocated booths: keeps the EARLIEST valid
+ * allocations (up to requiredOfficers) and marks the excess allocations
+ * CANCELLED with an explicit review reason (history is preserved, nothing is
+ * deleted). Recalculates every affected booth's counters afterwards.
+ */
+async function repairOverAllocatedBooths(req, res, next) {
+  try {
+    const overBooths = await countService.findOverAllocatedBooths();
+    const repaired = [];
+    for (const booth of overBooths) {
+      const allocations = await Allocation.find({ booth: booth._id, status: STATUS.ALLOCATED })
+        .sort({ allocationDate: 1, createdAt: 1 })
+        .select('_id officerId allocationDate status');
+      const excess = allocations.slice(booth.requiredOfficers); // keep earliest ones
+      const now = new Date();
+      const ids = [];
+      for (const allocation of excess) {
+        allocation.status = STATUS.CANCELLED;
+        allocation.cancelledAt = now;
+        allocation.adminApproved = false;
+        allocation.allocationReason =
+          'Excess allocation cancelled by capacity repair (booth was over its required officers)';
+        await allocation.save();
+        ids.push(allocation._id);
+      }
+      const counts = await countService.recalculateBoothCounts(booth._id);
+      repaired.push({
+        boothNumber: booth.boothNumber,
+        boothCode: booth.boothId,
+        requiredOfficers: booth.requiredOfficers,
+        actualAllocatedOfficersBefore: booth.actualAllocatedOfficers,
+        excessOfficers: booth.excessOfficers,
+        cancelledAllocationIds: ids,
+        allocatedOfficerCount: counts.allocatedOfficerCount,
+        availableSlots: counts.availableSlots,
+      });
+    }
+    return res.json({
+      success: true,
+      message: repaired.length
+        ? `Repaired ${repaired.length} over-allocated booth(s): excess allocations marked CANCELLED for review (earliest valid allocations kept).`
+        : 'No over-allocated booths found. Database is consistent.',
+      repaired,
     });
   } catch (error) {
     next(error);
@@ -331,8 +485,11 @@ module.exports = {
   getAllocations,
   getAllocationMandals,
   getSuitableBooths,
+  manualAllocateAction,
   cancelAllocationAction,
   reallocateAllocation,
+  getOverAllocatedBooths,
+  repairOverAllocatedBooths,
   getDashboardStats,
   deleteAllAllocations,
   deleteAllocationsByMandal,

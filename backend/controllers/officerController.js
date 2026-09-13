@@ -3,7 +3,9 @@ const Allocation = require('../models/Allocation');
 const Booth = require('../models/Booth');
 const Notification = require('../models/Notification');
 const uploadBatchService = require('../services/uploadBatchService');
+const countService = require('../services/countService');
 const { scopeFilter } = require('../services/roleService');
+const { sortByOfficerId } = require('../utils/naturalSort');
 
 /** Escapes a user-provided value so it is safe inside a RegExp. */
 function escapeRegex(value) {
@@ -51,10 +53,12 @@ async function getOfficers(req, res, next) {
     const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 50));
     const filter = buildOfficerFilter(req);
 
-    const [officers, total] = await Promise.all([
-      Officer.find(filter).sort({ officerId: 1 }).skip((page - 1) * limit).limit(limit).lean(),
-      Officer.countDocuments(filter),
-    ]);
+    // Natural Officer ID ordering (OFF1 < OFF2 < OFF10) cannot be expressed by
+    // a plain MongoDB string sort, so sort in memory and then paginate.
+    const all = await Officer.find(filter).lean();
+    const sorted = sortByOfficerId(all);
+    const total = sorted.length;
+    const officers = sorted.slice((page - 1) * limit, page * limit);
 
     return res.json({
       success: true,
@@ -110,15 +114,9 @@ async function deleteOfficer(req, res, next) {
         const boothId = a.booth ? String(a.booth) : '';
         if (boothId) boothCounts[boothId] = (boothCounts[boothId] || 0) + 1;
       }
-      for (const [boothId, count] of Object.entries(boothCounts)) {
-        // Clamp so the counter can never go below zero.
-        const booth = await Booth.findById(boothId).lean();
-        if (booth) {
-          await Booth.updateOne(
-            { _id: boothId },
-            { allocatedOfficerCount: Math.max(0, booth.allocatedOfficerCount - count) }
-          );
-        }
+      for (const [boothId] of Object.entries(boothCounts)) {
+        // Recalculate from the REAL allocation documents (never stale arithmetic).
+        await countService.recalculateBoothCounts(boothId);
       }
     }
     await Notification.deleteMany({ officer: officer._id });
@@ -152,7 +150,7 @@ async function getOfficersGrouped(req, res, next) {
     }
 
     const data = [...groups.entries()]
-      .map(([mandal, list]) => ({ mandal, total: list.length, officers: list }))
+      .map(([mandal, list]) => ({ mandal, total: list.length, officers: sortByOfficerId(list) }))
       .sort((a, b) => a.mandal.localeCompare(b.mandal));
 
     return res.json({
@@ -196,15 +194,9 @@ async function deleteAllOfficers(req, res, next) {
       const boothId = a.booth ? String(a.booth) : '';
       if (boothId) boothCounts[boothId] = (boothCounts[boothId] || 0) + 1;
     }
-    for (const [boothId, count] of Object.entries(boothCounts)) {
-      // Clamp so the counter can never go below zero.
-      const booth = await Booth.findById(boothId).lean();
-      if (booth) {
-        await Booth.updateOne(
-          { _id: boothId },
-          { allocatedOfficerCount: Math.max(0, booth.allocatedOfficerCount - count) }
-        );
-      }
+    for (const [boothId] of Object.entries(boothCounts)) {
+      // Recalculate from the REAL allocation documents (never stale arithmetic).
+      await countService.recalculateBoothCounts(boothId);
     }
 
     // 2. Notifications + the officers themselves.

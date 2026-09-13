@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Spinner from './Spinner';
 import Toast from './Toast';
+import { sortByOfficerId } from '../utils/naturalSort';
 
 /**
  * Booth-wise allocation cards (spec section 13).
@@ -23,8 +24,10 @@ export default function BoothWiseAllocation({ booths = [], allocationsByBooth = 
       {booths.map((b) => {
         const key = String(b._id);
         const list = allocationsByBooth[key] || allocationsByBooth[b.boothId] || [];
+        // Natural sort by Officer ID ascending (OFF1 < OFF2 < OFF10) — spec 12.7.
+        const sortedList = sortByOfficerId(list, (a) => a.officer?.officerId);
         const required = b.requiredOfficers || 0;
-        const allocated = list.length;
+        const allocated = sortedList.length;
         const available = Math.max(0, required - allocated);
         const open = openId === key;
         return (
@@ -51,7 +54,7 @@ export default function BoothWiseAllocation({ booths = [], allocationsByBooth = 
             </div>
             {open ? (
               <div className="booth-body">
-                {list.length === 0 ? (
+                {sortedList.length === 0 ? (
                   <p className="empty-state">No officers allocated to this booth yet.</p>
                 ) : (
                   <div className="table-wrap">
@@ -67,7 +70,7 @@ export default function BoothWiseAllocation({ booths = [], allocationsByBooth = 
                         </tr>
                       </thead>
                       <tbody>
-                        {list.map((a, i) => (
+                        {sortedList.map((a, i) => (
                           <tr key={a._id}>
                             <td className="mono">{i + 1}</td>
                             <td>{a.officer?.officerName || '—'}</td>

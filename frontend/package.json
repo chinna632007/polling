@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Frontend dashboard for Smart Polling Booth Officer Allocation and Notification System",
   "scripts": {
+    "start": "vite",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"

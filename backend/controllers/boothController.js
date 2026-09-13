@@ -1,7 +1,22 @@
 const Booth = require('../models/Booth');
 const Allocation = require('../models/Allocation');
 const uploadBatchService = require('../services/uploadBatchService');
+const countService = require('../services/countService');
 const { scopeFilter } = require('../services/roleService');
+const { sortByBoothId } = require('../utils/naturalSort');
+
+/** Recomputes truthful capacity fields for API responses (never negative). */
+function withCapacityFields(booth) {
+  if (!booth) return booth;
+  const requiredOfficers = Math.max(0, Number(booth.requiredOfficers) || 0);
+  const allocatedOfficerCount = Math.max(0, Number(booth.allocatedOfficerCount) || 0);
+  return {
+    ...booth,
+    availableSlots: Math.max(0, requiredOfficers - allocatedOfficerCount),
+    isFull: allocatedOfficerCount >= requiredOfficers,
+    overAllocated: allocatedOfficerCount > requiredOfficers,
+  };
+}
 
 /** Escapes a user-provided value so it is safe inside a RegExp. */
 function escapeRegex(value) {
@@ -49,10 +64,11 @@ async function getBooths(req, res, next) {
     const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 50));
     const filter = buildBoothFilter(req);
 
-    const [booths, total] = await Promise.all([
-      Booth.find(filter).sort({ boothId: 1 }).skip((page - 1) * limit).limit(limit).lean(),
-      Booth.countDocuments(filter),
-    ]);
+    // Natural Booth ID ordering (PB2 < PB10) plus truthful capacity fields.
+    const all = await Booth.find(filter).lean();
+    const sorted = sortByBoothId(all).map(withCapacityFields);
+    const total = sorted.length;
+    const booths = sorted.slice((page - 1) * limit, page * limit);
 
     return res.json({
       success: true,
@@ -84,7 +100,21 @@ async function updateBooth(req, res, next) {
     if (!booth) {
       return res.status(404).json({ success: false, message: 'Booth not found' });
     }
-    return res.json({ success: true, data: booth });
+    // Keep the counters truthful when requiredOfficers changes; the response
+    // also flags over-allocation so admins see it instead of it being hidden.
+    const counts = await countService.recalculateBoothCounts(booth._id);
+    const updated = await Booth.findById(booth._id).lean();
+    return res.json({
+      success: true,
+      data: withCapacityFields(updated),
+      ...(counts.overAllocated
+        ? {
+            warning:
+              `Booth ${updated.boothNumber} is over-allocated (required ${counts.requiredOfficers}, ` +
+              `allocated ${counts.allocatedOfficerCount}). See the over-allocated report for a safe repair.`,
+          }
+        : {}),
+    });
   } catch (error) {
     next(error);
   }
@@ -123,7 +153,7 @@ async function deleteBooth(req, res, next) {
 async function getBoothsGrouped(req, res, next) {
   try {
     const filter = buildBoothFilter(req);
-    const booths = await Booth.find(filter).sort({ mandal: 1, boothId: 1 }).lean();
+    const booths = await Booth.find(filter).lean();
 
     const groups = new Map();
     for (const booth of booths) {
@@ -133,13 +163,17 @@ async function getBoothsGrouped(req, res, next) {
     }
 
     const data = [...groups.entries()]
-      .map(([mandal, list]) => ({
-        mandal,
-        total: list.length,
-        booths: list,
-        requiredOfficers: list.reduce((sum, b) => sum + (b.requiredOfficers || 0), 0),
-        allocatedOfficers: list.reduce((sum, b) => sum + (b.allocatedOfficerCount || 0), 0),
-      }))
+      .map(([mandal, list]) => {
+        const sortedList = sortByBoothId(list).map(withCapacityFields);
+        return {
+          mandal,
+          total: sortedList.length,
+          booths: sortedList,
+          requiredOfficers: sortedList.reduce((sum, b) => sum + (b.requiredOfficers || 0), 0),
+          allocatedOfficers: sortedList.reduce((sum, b) => sum + (b.allocatedOfficerCount || 0), 0),
+          availableSlots: sortedList.reduce((sum, b) => sum + (b.availableSlots || 0), 0),
+        };
+      })
       .sort((a, b) => a.mandal.localeCompare(b.mandal));
 
     return res.json({

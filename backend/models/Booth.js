@@ -60,13 +60,15 @@ const boothSchema = new mongoose.Schema(
 );
 
 // Keep capacity fields consistent before validation.
-
+// availableSlots can NEVER be negative. allocatedOfficerCount stores the
+// ACTUAL number of ALLOCATED allocation documents; an over-allocated booth
+// is reported by the capacity report (GET /api/allocation/over-allocated)
+// instead of being silently hidden here.
 boothSchema.pre('validate', function ensureCapacityConsistency() {
-  this.availableSlots = Math.max(0, (this.requiredOfficers || 0) - (this.allocatedOfficerCount || 0));
-  if (this.allocatedOfficerCount > this.requiredOfficers) {
-
-    this.invalidate('allocatedOfficerCount', 'Allocated count cannot exceed required officers');
-  }
+  const required = Math.max(0, this.requiredOfficers || 0);
+  const allocated = Math.max(0, this.allocatedOfficerCount || 0);
+  this.allocatedOfficerCount = allocated;
+  this.availableSlots = Math.max(0, required - allocated);
 });
 
 boothSchema.index({ mandalId: 1 });

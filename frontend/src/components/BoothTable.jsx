@@ -1,4 +1,5 @@
 import Badge from './Badge';
+import { compareBoothIds } from '../utils/naturalSort';
 
 /**
  * Booths table. Scrolls horizontally on small screens.
@@ -14,6 +15,9 @@ export default function BoothTable({ booths = [], onEdit, onDelete, loading }) {
 
   // Role-aware: when the logged-in user may not edit/delete, hide the column entirely.
   const showActions = Boolean(onEdit) || Boolean(onDelete);
+
+  // Defensive natural sort by Booth ID ascending (PB2 < PB10).
+  const sorted = [...booths].sort((a, b) => compareBoothIds(a.boothId, b.boothId));
 
   return (
     <div className="table-wrap">
@@ -33,7 +37,7 @@ export default function BoothTable({ booths = [], onEdit, onDelete, loading }) {
           </tr>
         </thead>
         <tbody>
-          {booths.map((b) => {
+          {sorted.map((b) => {
             const vacant = Math.max(0, b.requiredOfficers - b.allocatedOfficerCount);
             return (
               <tr key={b._id}>

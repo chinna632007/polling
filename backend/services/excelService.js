@@ -13,6 +13,7 @@ const XLSX = require('xlsx');
 const Officer = require('../models/Officer');
 const Booth = require('../models/Booth');
 const Notification = require('../models/Notification');
+const { sortByOfficerId, sortByBoothId } = require('../utils/naturalSort');
 
 // ---------------------------------------------------------------------------
 // Column definitions (must match the specification exactly)
@@ -440,8 +441,9 @@ function buildTemplate(kind) {
 /** Officer List (all officers) -> XLSX buffer */
 /** Officer master list -> XLSX buffer (filter = role-scoped query). */
 async function officerReport(filter = {}) {
-  const officers = await Officer.find(filter).sort({ officerId: 1 }).lean();
-  const rows = officers.map((o) => ({
+  const officers = await Officer.find(filter).lean();
+  // Natural Officer ID order: OFF1 < OFF2 < OFF10.
+  const rows = sortByOfficerId(officers).map((o) => ({
     'Officer ID': o.officerId,
     'Officer Name': o.officerName,
     Designation: o.designation,
@@ -460,8 +462,9 @@ async function officerReport(filter = {}) {
 
 /** Booth List -> XLSX buffer (filter = role-scoped query). */
 async function boothReport(filter = {}) {
-  const booths = await Booth.find(filter).sort({ boothId: 1 }).lean();
-  const rows = booths.map((b) => ({
+  const booths = await Booth.find(filter).lean();
+  // Natural Booth ID order: PB2 < PB10.
+  const rows = sortByBoothId(booths).map((b) => ({
     'Booth ID': b.boothId,
     'Booth Number': b.boothNumber,
     'Booth Name': b.boothName,
@@ -512,8 +515,8 @@ async function unallocatedOfficersReport(filter = {}) {
   const Allocation = require('../models/Allocation');
   const allocated = await Allocation.find({ status: 'ALLOCATED' }).select('officer').lean();
   const allocatedIds = new Set(allocated.map((a) => String(a.officer)));
-  const officers = await Officer.find(filter).sort({ officerId: 1 }).lean();
-  const rows = officers
+  const officers = await Officer.find(filter).lean();
+  const rows = sortByOfficerId(officers)
     .filter((o) => !allocatedIds.has(String(o._id)))
     .map((o) => ({
       'Officer ID': o.officerId || '',
@@ -556,11 +559,18 @@ async function notificationReport(filter = {}) {
  */
 async function getAllocationRowsForReport(filter = {}) {
   const Allocation = require('../models/Allocation');
-  return Allocation.find(filter)
+  const rows = await Allocation.find(filter)
     .populate('officer')
     .populate('booth')
     .sort({ allocationDate: -1 })
     .lean();
+  // Officer ID ascending (natural numeric order) for every report row set.
+  return rows.sort((a, b) =>
+    String(a.officer?.officerId || '').localeCompare(String(b.officer?.officerId || ''), undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    })
+  );
 }
 
 module.exports = {

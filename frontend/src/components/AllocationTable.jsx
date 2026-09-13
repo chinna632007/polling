@@ -1,5 +1,6 @@
 import Badge from './Badge';
 import { addressCompatibilityLabel, localityLine } from './addressCompatibility';
+import { sortByOfficerId } from '../utils/naturalSort';
 
 /**
  * Full allocation table used on the Allocation page.
@@ -38,6 +39,9 @@ export default function AllocationTable({
 
   const showActions = Boolean(onReallocate) || Boolean(onCancel) || Boolean(onSendNotification);
 
+  // Natural sort by Officer ID ascending (OFF1 < OFF2 < OFF10) — spec 12.7.
+  const sortedAllocations = sortByOfficerId(allocations, (a) => a.officer?.officerId);
+
   return (
     <div className="table-wrap">
       <table className="table table-allocations">
@@ -61,7 +65,7 @@ export default function AllocationTable({
           </tr>
         </thead>
         <tbody>
-          {allocations.map((a, index) => {
+          {sortedAllocations.map((a, index) => {
             const compatibility = addressCompatibilityLabel(a);
             const active = a.status === 'ALLOCATED';
             return (
